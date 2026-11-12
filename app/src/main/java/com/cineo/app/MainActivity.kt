@@ -315,7 +315,7 @@ fun HeroCarousel(vm: AppVm, list: List<Item>, label: String) {
         HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
             val h = list[page]
             Box(Modifier.fillMaxSize().clickable { vm.detail = h }) {
-                AsyncImage(thumb(h.image, 780), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                AsyncImage(thumb(h.image, 780), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Bg.copy(alpha = 0.85f), Bg))))
                 Column(Modifier.align(Alignment.BottomCenter).padding(16.dp, 0.dp, 16.dp, 34.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(label.uppercase(), color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
