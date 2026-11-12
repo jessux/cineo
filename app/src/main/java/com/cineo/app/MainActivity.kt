@@ -47,6 +47,12 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.delay
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.ui.draw.drawBehind
 
 val Bg = Color(0xFF0E0D13)
 val Card = Color(0xFF1C1A24)
@@ -209,7 +215,7 @@ fun HeroCarousel(vm: AppVm, list: List<Item>, label: String) {
             val h = list[page]
             val off = (pager.currentPage - page) + pager.currentPageOffsetFraction
             Box(Modifier.fillMaxSize().clickable { vm.detail = h }) {
-                AsyncImage(h.image, null, Modifier.fillMaxSize().graphicsLayer {
+                AsyncImage(thumb(h.image, 780), null, Modifier.fillMaxSize().graphicsLayer {
                     translationX = off * size.width * 0.4f; val sc = 1.1f - 0.1f * (1 - kotlin.math.abs(off)).coerceIn(0f, 1f); scaleX = sc; scaleY = sc
                 }, contentScale = ContentScale.Crop)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Bg.copy(alpha = 0.85f), Bg))))
@@ -255,9 +261,38 @@ fun PosterRow(title: String, items: List<Item>, onClick: (Item) -> Unit) {
 
 @Composable
 fun Poster(item: Item, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    var state by remember(item.key) { mutableIntStateOf(if (item.image == null) 2 else 0) } // 0 chargement, 1 ok, 2 erreur
     Box(modifier.aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(Card).clickable(onClick = onClick)) {
-        Text(item.name, Modifier.align(Alignment.Center).padding(8.dp), fontSize = 12.sp, textAlign = TextAlign.Center, color = Color.LightGray)
-        AsyncImage(item.image, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        when (state) {
+            0 -> LoadingLogo(Modifier.fillMaxSize())
+            2 -> Text(item.name, Modifier.align(Alignment.Center).padding(8.dp), fontSize = 12.sp, textAlign = TextAlign.Center, color = Color.LightGray)
+        }
+        if (item.image != null) AsyncImage(
+            thumb(item.image, 342), item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
+            onSuccess = { state = 1 }, onError = { state = 2 },
+        )
+    }
+}
+
+/** Les affiches TMDB arrivent en taille originale (plusieurs Mo) : on demande une version réduite. */
+fun thumb(url: String?, w: Int): String? = url?.replace("/t/p/original/", "/t/p/w$w/")
+
+/** Placeholder animé : reflet qui balaie + monogramme Cinéo qui pulse. */
+@Composable
+fun LoadingLogo(modifier: Modifier = Modifier) {
+    val tr = rememberInfiniteTransition(label = "load")
+    val x by tr.animateFloat(-1f, 2f, infiniteRepeatable(tween(1300, easing = LinearEasing)), label = "x")
+    val a by tr.animateFloat(0.35f, 0.9f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "a")
+    Box(modifier.drawBehind {
+        val w = size.width
+        drawRect(Brush.linearGradient(
+            listOf(Card, Color(0xFF2A2735), Card),
+            start = androidx.compose.ui.geometry.Offset(w * x - w * 0.5f, 0f),
+            end = androidx.compose.ui.geometry.Offset(w * x + w * 0.5f, size.height),
+        ))
+    }, contentAlignment = Alignment.Center) {
+        Text("C", Modifier.graphicsLayer { alpha = a; scaleX = 0.9f + a * 0.15f; scaleY = 0.9f + a * 0.15f },
+            color = Gold, fontSize = 34.sp, fontWeight = FontWeight.Black)
     }
 }
 
@@ -344,7 +379,7 @@ fun DetailScreen(vm: AppVm, item: Item) {
     LazyColumn(Modifier.fillMaxSize().background(Bg)) {
         item {
             Box(Modifier.fillMaxWidth().height(300.dp)) {
-                AsyncImage(info?.backdrop ?: item.image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                AsyncImage(thumb(info?.backdrop ?: item.image, 780), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0x66000000), Color.Transparent, Bg))))
                 IconButton(onClick = { vm.detail = null }, Modifier.statusBarsPadding().padding(4.dp)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour")
