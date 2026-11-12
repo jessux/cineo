@@ -18,14 +18,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Clé de signature
         env:
-          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 || vars.KEYSTORE_B64 }}
         run: |
           if [ -z "$KEYSTORE_B64" ]; then echo "::error::Ajoutez les secrets KEYSTORE_B64 et KEYSTORE_PASS (Settings > Secrets and variables > Actions)"; exit 1; fi
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/cineo.jks"
       - name: Compilation de l'APK
         env:
           KEYSTORE_FILE: ${{ runner.temp }}/cineo.jks
-          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS || vars.KEYSTORE_PASS }}
           VERSION_CODE: ${{ github.run_number }}
         run: ./gradlew assembleRelease --no-daemon
       - name: Publication de la release
