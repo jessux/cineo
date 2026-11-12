@@ -9,6 +9,7 @@ concurrency: release
 jobs:
   build:
     runs-on: ubuntu-latest
+    environment: BUILD
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
