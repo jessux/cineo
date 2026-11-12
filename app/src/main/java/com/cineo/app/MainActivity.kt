@@ -279,11 +279,8 @@ fun HeroCarousel(vm: AppVm, list: List<Item>, label: String) {
     Box(Modifier.fillMaxWidth().height(480.dp)) {
         HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
             val h = list[page]
-            val off = (pager.currentPage - page) + pager.currentPageOffsetFraction
             Box(Modifier.fillMaxSize().clickable { vm.detail = h }) {
-                AsyncImage(thumb(h.image, 780), null, Modifier.fillMaxSize().graphicsLayer {
-                    translationX = off * size.width * 0.4f; val sc = 1.1f - 0.1f * (1 - kotlin.math.abs(off)).coerceIn(0f, 1f); scaleX = sc; scaleY = sc
-                }, contentScale = ContentScale.Crop)
+                AsyncImage(thumb(h.image, 780), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Bg.copy(alpha = 0.85f), Bg))))
                 Column(Modifier.align(Alignment.BottomCenter).padding(16.dp, 0.dp, 16.dp, 34.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(label.uppercase(), color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
