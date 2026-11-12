@@ -305,7 +305,9 @@ fun HomeScreen(vm: AppVm) {
 fun HeroCarousel(vm: AppVm, list: List<Item>, label: String) {
     val ctx = LocalContext.current
     val pager = rememberPagerState { list.size }
-    LaunchedEffect(pager, list) {
+    LaunchedEffect(pager, list, vm.resumeTick) {
+        // Recale le carrousel si un défilement a été interrompu (écran verrouillé)
+        if (pager.currentPageOffsetFraction != 0f && !pager.isScrollInProgress) pager.scrollToPage(pager.currentPage)
         while (true) {
             delay(6000)
             if (!pager.isScrollInProgress) pager.animateScrollToPage((pager.currentPage + 1) % list.size, animationSpec = tween(700))
