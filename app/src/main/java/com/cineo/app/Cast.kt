@@ -22,11 +22,14 @@ import com.google.android.gms.cast.framework.media.CastMediaOptions
 import com.google.android.gms.cast.framework.media.widget.ExpandedControllerActivity
 import com.google.android.gms.common.images.WebImage
 
+/** ExpandedControllerActivity est abstraite : sous-classe obligatoire. */
+class CastControllerActivity : ExpandedControllerActivity()
+
 class CastOptionsProvider : OptionsProvider {
     override fun getCastOptions(ctx: Context): CastOptions = CastOptions.Builder()
         .setReceiverApplicationId("CC1AD845") // Default Media Receiver
         .setCastMediaOptions(
-            CastMediaOptions.Builder().setExpandedControllerActivityClassName(ExpandedControllerActivity::class.java.name).build()
+            CastMediaOptions.Builder().setExpandedControllerActivityClassName(CastControllerActivity::class.java.name).build()
         ).build()
     override fun getAdditionalSessionProviders(ctx: Context): List<SessionProvider>? = null
 }
@@ -50,7 +53,7 @@ object Cast {
         val info = MediaInfo.Builder(u).setContentType(type).setMetadata(meta)
             .setStreamType(if (live) MediaInfo.STREAM_TYPE_LIVE else MediaInfo.STREAM_TYPE_BUFFERED).build()
         client.load(MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true).build())
-        c.startActivity(Intent(c, ExpandedControllerActivity::class.java))
+        c.startActivity(Intent(c, CastControllerActivity::class.java))
         return true
     }
 }
