@@ -77,8 +77,10 @@ class MainActivity : AppCompatActivity() {
         setContent {
             var splash by rememberSaveable { mutableStateOf(true) }
             MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Bg, secondary = Gold)) {
-                App(vm)
-                if (splash) SplashScreen { splash = false }
+                CompositionLocalProvider(LocalContentColor provides Color.White) {
+                    App(vm)
+                    if (splash) SplashScreen { splash = false }
+                }
             }
         }
     }
