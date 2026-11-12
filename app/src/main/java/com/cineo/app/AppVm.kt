@@ -68,6 +68,17 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     }
 
     val pid get() = profile?.id ?: "p0"
+    // ---- Alerte : abonnement déjà utilisé ailleurs ----
+    var pendingPlay by mutableStateOf<(() -> Unit)?>(null)
+    var conns by mutableStateOf(0 to 0); private set
+    fun guard(action: () -> Unit) {
+        val x = api ?: return
+        viewModelScope.launch {
+            val c = runCatching { x.connections() }.getOrDefault(0 to 0)
+            if (c.second > 0 && c.first >= c.second) { conns = c; pendingPlay = action } else action()
+        }
+    }
+
     var resumeTick by mutableStateOf(0) // relu au retour du lecteur
     fun resumeOf(c: android.content.Context, i: Item) = Resume.get(c, "$pid|${i.key}")
 

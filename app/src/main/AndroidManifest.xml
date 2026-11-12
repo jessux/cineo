@@ -2,6 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <queries>
+        <package android:name="org.videolan.vlc" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="video/*" android:scheme="http" />

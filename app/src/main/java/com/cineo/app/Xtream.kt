@@ -16,7 +16,10 @@ data class Item(
     val categoryId: String, val ext: String, val rating: String, val added: Long,
 ) { val key get() = "${kind.name}:$id" }
 data class Episode(val id: String, val title: String, val ext: String, val season: Int, val num: Int, val image: String?, val plot: String?)
-data class Info(val plot: String?, val backdrop: String?, val meta: String, val episodes: Map<Int, List<Episode>> = emptyMap())
+data class Info(
+    val plot: String?, val backdrop: String?, val meta: String, val episodes: Map<Int, List<Episode>> = emptyMap(),
+    val cast: String = "", val director: String = "", val trailer: String = "", val rating: String = "",
+)
 
 private fun JSONObject.s(k: String) = if (isNull(k)) "" else optString(k)
 private fun <T> JSONArray.objs(f: (JSONObject) -> T) = (0 until length()).mapNotNull { optJSONObject(it)?.let(f) }
@@ -59,14 +62,18 @@ class Xtream(val c: Creds) {
     }
 
     private fun backdrop(o: JSONObject): String? =
-        when (val b = o.opt("backdrop_path")) { is JSONArray -> b.optString(0); is String -> b; else -> null }?.ifBlank { null }
+        (when (val b = o.opt("backdrop_path")) { is JSONArray -> b.optString(0); is String -> b; else -> null }?.ifBlank { null })
+            ?: o.s("backdrop").split(Regex("\\s+")).firstOrNull { it.length > 12 }
+
+    private fun extras(i: Info, o: JSONObject) =
+        i.copy(cast = o.s("cast"), director = o.s("director"), trailer = o.s("youtube_trailer"), rating = o.s("rating"))
 
     suspend fun vodInfo(id: String) = io {
         val i = obj("get_vod_info", "&vod_id=$id").optJSONObject("info") ?: JSONObject()
-        Info(
+        extras(Info(
             i.s("plot").ifBlank { i.s("description") }.ifBlank { null }, backdrop(i),
             listOf(i.s("releasedate").take(4), i.s("genre"), i.s("duration")).filter { it.isNotBlank() }.joinToString(" · "),
-        )
+        ), i)
     }
 
     suspend fun seriesInfo(id: String) = io {
@@ -87,11 +94,17 @@ class Xtream(val c: Creds) {
             is JSONObject -> e.keys().forEach { k -> e.optJSONArray(k)?.let { add(it) } }
             is JSONArray -> for (n in 0 until e.length()) e.optJSONArray(n)?.let { add(it) }
         }
-        Info(
+        extras(Info(
             i.s("plot").ifBlank { null }, backdrop(i),
             listOf(i.s("releaseDate").take(4), i.s("genre")).filter { it.isNotBlank() }.joinToString(" · "),
             eps.sortedBy { it.num }.groupBy { it.season }.toSortedMap(),
-        )
+        ), i)
+    }
+
+    /** Nombre de connexions en cours / maximum autorisé sur l'abonnement. */
+    suspend fun connections(): Pair<Int, Int> = io {
+        val u = obj(null).optJSONObject("user_info") ?: JSONObject()
+        (u.s("active_cons").toIntOrNull() ?: 0) to (u.s("max_connections").toIntOrNull() ?: 0)
     }
 
     fun url(item: Item) = when (item.kind) {

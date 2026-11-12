@@ -45,13 +45,27 @@ class PlayerActivity : ComponentActivity() {
         keys.firstOrNull()?.let { k -> Resume.get(this, k)?.let { p.seekTo(it.pos) } }
         p.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
-                // Format non lisible par le téléphone : on propose un lecteur externe (VLC, MX Player…)
-                val ext = Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(url), "video/*")
-                if (ext.resolveActivity(packageManager) != null) {
-                    Toast.makeText(this@PlayerActivity, "Format non pris en charge, ouverture dans un lecteur externe", Toast.LENGTH_LONG).show()
-                    startActivity(Intent.createChooser(ext, "Lire avec"))
-                    finish()
-                } else Toast.makeText(this@PlayerActivity, "Lecture impossible (${error.errorCodeName}). Installez VLC pour ce format.", Toast.LENGTH_LONG).show()
+                val code = (error.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
+                if (code == 401 || code == 403 || code == 458) {
+                    Toast.makeText(this@PlayerActivity, "Accès refusé par le serveur : l'abonnement est probablement déjà utilisé sur un autre appareil.", Toast.LENGTH_LONG).show()
+                    finish(); return
+                }
+                // Format non lisible par le téléphone (souvent vidéo HEVC 10 bits) : on passe la main à VLC
+                val detail = (error.cause?.message ?: error.message ?: "").let { m ->
+                    Regex("(video|audio)/[\\w.-]+").findAll(m).map { it.value }.distinct().joinToString(", ")
+                }.ifBlank { error.errorCodeName }
+                val vlc = Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(url), "video/*").setPackage("org.videolan.vlc")
+                when {
+                    vlc.resolveActivity(packageManager) != null -> {
+                        Toast.makeText(this@PlayerActivity, "Format non pris en charge ($detail) : ouverture dans VLC", Toast.LENGTH_LONG).show()
+                        startActivity(vlc)
+                    }
+                    else -> {
+                        Toast.makeText(this@PlayerActivity, "Format non pris en charge ($detail). Installez VLC pour lire ce film.", Toast.LENGTH_LONG).show()
+                        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=org.videolan.vlc"))) }
+                    }
+                }
+                finish()
             }
         })
         p.prepare()

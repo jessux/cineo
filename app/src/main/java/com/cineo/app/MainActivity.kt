@@ -126,6 +126,17 @@ fun App(vm: AppVm) {
             BackHandler { vm.detail = null }
             DetailScreen(vm, d)
         }
+        vm.pendingPlay?.let { act ->
+            AlertDialog(
+                onDismissRequest = { vm.pendingPlay = null }, containerColor = Card,
+                icon = { Icon(Icons.Filled.Warning, null, tint = Gold) },
+                title = { Text("Quelqu'un regarde déjà") },
+                text = { Text("Connexions en cours : ${vm.conns.first} sur ${vm.conns.second} autorisée(s). " +
+                    "Lancer la lecture peut couper l'autre écran ou être refusé par le serveur.") },
+                confirmButton = { TextButton(onClick = { vm.pendingPlay = null; act() }) { Text("Regarder quand même") } },
+                dismissButton = { TextButton(onClick = { vm.pendingPlay = null }) { Text("Annuler") } },
+            )
+        }
     }
 }
 
@@ -164,7 +175,9 @@ fun Logo(size: Int) = Text(
 )
 
 // ---------- Accueil ----------
-fun AppVm.play(ctx: android.content.Context, item: Item, ep: Episode? = null) {
+fun AppVm.play(ctx: android.content.Context, item: Item, ep: Episode? = null) = guard { startPlay(ctx, item, ep) }
+
+private fun AppVm.startPlay(ctx: android.content.Context, item: Item, ep: Episode?) {
     val x = api ?: return
     recordPlay(item)
     if (ep != null) PlayerActivity.start(ctx, x.url(ep), "${item.name} – ${ep.title}", ep.image ?: item.image,
@@ -288,6 +301,10 @@ fun Poster(item: Item, modifier: Modifier = Modifier, progress: Float? = null, o
             }
         }
     }
+}
+
+fun openUrl(ctx: android.content.Context, url: String) = runCatching {
+    ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
 }
 
 /** Les affiches TMDB arrivent en taille originale (plusieurs Mo) : on demande une version réduite. */
@@ -430,6 +447,18 @@ fun DetailScreen(vm: AppVm, item: Item) {
                     Text(if (fav) "Dans ma liste" else "Ma liste")
                 }
                 info?.plot?.let { Text(it, Modifier.padding(top = 14.dp), fontSize = 14.sp, color = Color(0xFFDDDDDD)) }
+                info?.let { inf ->
+                    if (inf.director.isNotBlank()) Text("Réalisation : ${inf.director}", Modifier.padding(top = 10.dp), fontSize = 13.sp, color = Color.Gray)
+                    if (inf.cast.isNotBlank()) Text("Avec : ${inf.cast}", Modifier.padding(top = 4.dp), fontSize = 13.sp, color = Color.Gray, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (inf.trailer.isNotBlank()) OutlinedButton(onClick = { openUrl(ctx, "https://www.youtube.com/watch?v=${inf.trailer}") }) {
+                            Icon(Icons.Filled.Movie, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Bande-annonce")
+                        }
+                        OutlinedButton(onClick = {
+                            openUrl(ctx, "https://www.imdb.com/find/?q=" + java.net.URLEncoder.encode(item.name, "UTF-8"))
+                        }) { Text("IMDb", color = Gold, fontWeight = FontWeight.Black) }
+                    }
+                }
                 if (info == null) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 14.dp))
             }
         }
