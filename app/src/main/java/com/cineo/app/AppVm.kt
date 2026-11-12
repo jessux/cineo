@@ -130,6 +130,7 @@ class AppVm(app: Application) : AndroidViewModel(app) {
                 if (Xtream(c).login()) {
                     prefs.edit().putString("server", s).putString("user", u).putString("pass", p).apply()
                     creds = c
+                    busy = false
                     loadAll()
                 } else error = "Identifiants refusés par le serveur"
             } catch (e: Exception) { error = "Connexion impossible : ${e.message}" }

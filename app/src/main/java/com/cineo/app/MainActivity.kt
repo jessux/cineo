@@ -97,9 +97,9 @@ fun App(vm: AppVm) {
                 when {
                     vm.busy && vm.movies.isEmpty() && vm.live.isEmpty() ->
                         Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-                    vm.error != null && vm.movies.isEmpty() && vm.live.isEmpty() ->
+                    vm.movies.isEmpty() && vm.series.isEmpty() && vm.live.isEmpty() ->
                         Column(Modifier.fillMaxSize().padding(24.dp), Arrangement.Center, Alignment.CenterHorizontally) {
-                            Text(vm.error!!, textAlign = TextAlign.Center)
+                            Text(vm.error ?: "Aucun contenu chargé", textAlign = TextAlign.Center)
                             Spacer(Modifier.height(16.dp))
                             Button(onClick = { vm.loadAll() }) { Text("Réessayer") }
                             TextButton(onClick = { vm.logout() }) { Text("Changer de compte") }
