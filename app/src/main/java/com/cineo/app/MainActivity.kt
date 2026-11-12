@@ -344,10 +344,14 @@ fun HeroCarousel(vm: AppVm, list: List<Item>, label: String) {
 }
 
 @Composable
-fun PosterRow(title: String, items: List<Item>, progress: (Item) -> Float? = { null }, onClick: (Item) -> Unit) {
+fun PosterRow(title: String, items: List<Item>, progress: (Item) -> Float? = { null }, onTitleClick: (() -> Unit)? = null, onClick: (Item) -> Unit) {
     if (items.isEmpty()) return
     Column(Modifier.padding(top = 14.dp)) {
-        Text(title, Modifier.padding(horizontal = 16.dp), fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Row(Modifier.fillMaxWidth().then(if (onTitleClick != null) Modifier.clickable(onClick = onTitleClick) else Modifier).padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Text(title, Modifier.weight(1f, false), fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (onTitleClick != null) Icon(Icons.Filled.ChevronRight, "Tout voir", tint = Color.Gray)
+        }
         Spacer(Modifier.height(8.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(items, key = { it.key }) { Poster(it, Modifier.width(112.dp), progress(it)) { onClick(it) } }
@@ -410,9 +414,21 @@ fun LoadingLogo(modifier: Modifier = Modifier) {
 // ---------- Films / Séries ----------
 @Composable
 fun CatalogScreen(vm: AppVm, title: String, cats: List<Category>, byCat: Map<String, List<Item>>) {
+    var open by rememberSaveable(title) { mutableStateOf<String?>(null) }
+    cats.firstOrNull { it.id == open }?.let { c ->
+        BackHandler { open = null }
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(4.dp, 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { open = null }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour") }
+                Text(c.name, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            PosterGrid(byCat[c.id].orEmpty()) { vm.detail = it }
+        }
+        return
+    }
     LazyColumn(Modifier.fillMaxSize()) {
         item { Text(title, Modifier.statusBarsPadding().padding(16.dp, 12.dp), fontSize = 26.sp, fontWeight = FontWeight.Bold) }
-        items(cats, key = { it.id }) { c -> PosterRow(c.name, byCat[c.id].orEmpty()) { vm.detail = it } }
+        items(cats, key = { it.id }) { c -> PosterRow(c.name, byCat[c.id].orEmpty(), onTitleClick = { open = c.id }) { vm.detail = it } }
         item { Spacer(Modifier.height(16.dp)) }
     }
 }
@@ -504,28 +520,77 @@ fun ChannelSheet(vm: AppVm, ch: Item, onDismiss: () -> Unit) {
 }
 
 // ---------- Recherche ----------
+/** Minuscules, sans accents ni ponctuation : « Été-2024 » -> « ete 2024 ». */
+fun norm(t: String) = java.text.Normalizer.normalize(t, java.text.Normalizer.Form.NFD)
+    .replace(Regex("\\p{M}+"), "").lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
+
+/** Tous les mots de la requête présents dans le texte, dans n'importe quel ordre. */
+private val normCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+fun matches(words: List<String>, text: String) = words.isEmpty() || normCache.getOrPut(text) { norm(text) }.let { n -> words.all { it in n } }
+
+@Composable
+fun PosterGrid(list: List<Item>, live: List<Item> = emptyList(), onLive: (Item) -> Unit = {}, onClick: (Item) -> Unit) {
+    LazyVerticalGrid(GridCells.Adaptive(108.dp), contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(list, key = { it.key }) { Poster(it) { onClick(it) } }
+        items(live, key = { it.key }) { ch ->
+            Column(Modifier.clip(RoundedCornerShape(6.dp)).background(Card).clickable { onLive(ch) }.padding(6.dp)) {
+                AsyncImage(ch.image, null, Modifier.fillMaxWidth().aspectRatio(16f / 9f), contentScale = ContentScale.Fit)
+                Text(ch.name, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
 @Composable
 fun SearchScreen(vm: AppVm) {
     var q by rememberSaveable { mutableStateOf("") }
+    var kind by rememberSaveable { mutableStateOf<Kind?>(null) } // null = films + séries
+    var cat by rememberSaveable { mutableStateOf<String?>(null) } // "KIND:id"
     val ctx = LocalContext.current
-    val res = remember(q, vm.movies, vm.series) {
-        if (q.length < 2) emptyList() else (vm.movies + vm.series).filter { it.name.contains(q, true) }.take(300)
+    val words = remember(q) { norm(q).split(" ").filter { it.isNotEmpty() } }
+    val cats = remember(kind, vm.movieCats, vm.seriesCats, vm.liveCats) {
+        when (kind) {
+            Kind.MOVIE -> vm.movieCats.map { Kind.MOVIE to it }
+            Kind.SERIES -> vm.seriesCats.map { Kind.SERIES to it }
+            Kind.LIVE -> vm.liveCats.map { Kind.LIVE to it }
+            null -> vm.movieCats.map { Kind.MOVIE to it } + vm.seriesCats.map { Kind.SERIES to it }
+        }
     }
-    val resLive = remember(q, vm.live) { if (q.length < 2) emptyList() else vm.live.filter { it.name.contains(q, true) }.take(100) }
+    // Catégories correspondant à la recherche en tête de liste
+    val shownCats = remember(cats, words) { cats.filter { matches(words, it.second.name) } + cats.filterNot { matches(words, it.second.name) } }
+    val res = remember(words, kind, cat, vm.movies, vm.series, vm.live) {
+        val src = when (kind) { Kind.MOVIE -> vm.movies; Kind.SERIES -> vm.series; Kind.LIVE -> vm.live; null -> vm.movies + vm.series }
+        val inCat = cat?.let { c -> src.filter { "${it.kind}:${it.categoryId}" == c } } ?: src
+        val hits = inCat.filter { matches(words, it.name) }
+        // Sans filtre de catégorie, on ajoute les titres des catégories qui correspondent
+        val extra = if (cat == null && words.isNotEmpty() && hits.size < 300) {
+            val keys = cats.filter { matches(words, it.second.name) }.map { "${it.first}:${it.second.id}" }.toSet()
+            inCat.filter { "${it.kind}:${it.categoryId}" in keys }
+        } else emptyList()
+        (hits + extra).distinctBy { it.key }.let { if (words.isEmpty() && cat == null) it.sortedByDescending { i -> i.added } else it }
+    }
+    // En mode « Tout », les chaînes correspondant à la recherche suivent les films/séries
+    val resLive = remember(words, kind, cat, vm.live) {
+        if (kind != null || cat != null || words.isEmpty()) emptyList() else vm.live.filter { matches(words, it.name) }.take(100)
+    }
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth().padding(16.dp), singleLine = true,
-            leadingIcon = { Icon(Icons.Filled.Search, null) }, placeholder = { Text("Films, séries, chaînes…") })
-        LazyVerticalGrid(GridCells.Adaptive(108.dp), contentPadding = PaddingValues(16.dp, 0.dp, 16.dp, 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(res, key = { it.key }) { Poster(it) { vm.detail = it } }
-            items(resLive, key = { it.key }) { ch ->
-                Column(Modifier.clip(RoundedCornerShape(6.dp)).background(Card)
-                    .clickable { vm.play(ctx, ch) }.padding(6.dp)) {
-                    AsyncImage(ch.image, null, Modifier.fillMaxWidth().aspectRatio(16f / 9f), contentScale = ContentScale.Fit)
-                    Text(ch.name, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                }
+        OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth().padding(16.dp, 16.dp, 16.dp, 8.dp), singleLine = true,
+            leadingIcon = { Icon(Icons.Filled.Search, null) }, placeholder = { Text("Films, séries, chaînes, catégories…") },
+            trailingIcon = { if (q.isNotEmpty()) IconButton(onClick = { q = "" }) { Icon(Icons.Filled.Close, "Effacer") } })
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(listOf(null to "Tout", Kind.MOVIE to "Films", Kind.SERIES to "Séries", Kind.LIVE to "TV")) { (k, l) ->
+                FilterChip(selected = kind == k, onClick = { kind = k; cat = null }, label = { Text(l) })
             }
         }
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(shownCats, key = { "${it.first}:${it.second.id}" }) { (k, c) ->
+                val id = "$k:${c.id}"
+                FilterChip(selected = cat == id, onClick = { cat = if (cat == id) null else id }, label = { Text(c.name) })
+            }
+        }
+        if (kind == Kind.LIVE) ChannelGrid(vm, res) { ch -> vm.play(ctx, ch) }
+        else PosterGrid(res, resLive, { ch -> vm.play(ctx, ch) }) { vm.detail = it }
     }
 }
 
