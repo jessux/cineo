@@ -50,20 +50,41 @@ def api(server, user, pwd, action=None):
 
 FR = re.compile(r"\b(fr|france|français|francais|french|vf|vff|fr\|)\b|🇫🇷|^fr |fr -|\bqc\b|québec|quebec", re.I)
 
+# Motifs appliqués au nom des catégories Xtream (sans tenir compte de la casse)
+PLATFORMS = {
+    "netflix": ("Netflix", re.compile(r"netflix|\bnf\b", re.I)),
+    "disney": ("Disney+", re.compile(r"disney", re.I)),
+    "apple": ("Apple TV+", re.compile(r"apple|\batv\b", re.I)),
+    "amazon": ("Amazon Prime", re.compile(r"amazon|prime\s*video|\bprime\b", re.I)),
+    "canal": ("Canal+", re.compile(r"canal", re.I)),
+    "hbo": ("HBO Max", re.compile(r"\bhbo\b", re.I)),
+    "paramount": ("Paramount+", re.compile(r"paramount", re.I)),
+    "ocs": ("OCS", re.compile(r"\bocs\b", re.I)),
+    "crunchyroll": ("Crunchyroll", re.compile(r"crunchyroll", re.I)),
+}
 
-def count(server, user, pwd, stream_action, cat_action):
-    """Retourne (total, fr) : total de flux et ceux des catégories françaises."""
+
+def fetch(server, user, pwd, stream_action, cat_action):
+    """Retourne (flux, catégories), ou None en cas d'erreur."""
     try:
         cats = api(server, user, pwd, cat_action)
-        fr_ids = {str(c.get("category_id")) for c in cats if isinstance(c, dict) and FR.search(c.get("category_name", ""))}
         streams = api(server, user, pwd, stream_action)
-        if not isinstance(streams, list):
-            return 0, 0
-        total = len(streams)
-        frn = sum(1 for x in streams if str(x.get("category_id")) in fr_ids)
-        return total, frn
+        if not isinstance(streams, list) or not isinstance(cats, list):
+            return [], []
+        return streams, cats
     except Exception:
-        return -1, -1
+        return None
+
+
+def tally(data, pattern=None):
+    """Nombre de flux ; si pattern est fourni, seulement ceux dont la catégorie correspond."""
+    if data is None:
+        return -1
+    streams, cats = data
+    if pattern is None:
+        return len(streams)
+    ids = {str(c.get("category_id")) for c in cats if isinstance(c, dict) and pattern.search(c.get("category_name", ""))}
+    return sum(1 for x in streams if str(x.get("category_id")) in ids)
 
 
 def check(acc):
@@ -72,6 +93,9 @@ def check(acc):
            "expire": "", "trial": "", "cons": "", "max_cons": "", "active_cons": "",
            "films": "", "films_fr": "", "series": "", "series_fr": "",
            "live": "", "live_fr": "", "note": ""}
+    for key in PLATFORMS:
+        for t in ("films", "series", "live"):
+            row[f"{key}_{t}"] = ""
     try:
         info = api(server, user, pwd).get("user_info", {})
     except Exception as e:
@@ -96,9 +120,16 @@ def check(acc):
     row["cons"] = f'{info.get("active_cons","?")}/{info.get("max_connections","?")}'
     row["max_cons"] = info.get("max_connections", "?")
     row["active_cons"] = info.get("active_cons", "?")
-    row["films"], row["films_fr"] = count(server, user, pwd, "get_vod_streams", "get_vod_categories")
-    row["series"], row["series_fr"] = count(server, user, pwd, "get_series", "get_series_categories")
-    row["live"], row["live_fr"] = count(server, user, pwd, "get_live_streams", "get_live_categories")
+    data = {
+        "films": fetch(server, user, pwd, "get_vod_streams", "get_vod_categories"),
+        "series": fetch(server, user, pwd, "get_series", "get_series_categories"),
+        "live": fetch(server, user, pwd, "get_live_streams", "get_live_categories"),
+    }
+    for t, d in data.items():
+        row[t] = tally(d)
+        row[f"{t}_fr"] = tally(d, FR)
+        for key, (_, pat) in PLATFORMS.items():
+            row[f"{key}_{t}"] = tally(d, pat)
     return row
 
 
@@ -139,6 +170,13 @@ def main():
             print(f'     Films   : {r["films"]:>6} (FR {r["films_fr"]})')
             print(f'     Séries  : {r["series"]:>6} (FR {r["series_fr"]})')
             print(f'     Chaînes : {r["live"]:>6} (FR {r["live_fr"]})')
+            plats = [(label, r[f"{key}_films"], r[f"{key}_series"], r[f"{key}_live"])
+                     for key, (label, _) in PLATFORMS.items()
+                     if any(isinstance(r[f"{key}_{t}"], int) and r[f"{key}_{t}"] > 0 for t in ("films", "series", "live"))]
+            if plats:
+                print("     Plateformes :")
+                for label, f_, s_, c_ in plats:
+                    print(f'       {label:<13} films {f_:>6} | séries {s_:>6} | chaînes {c_:>6}')
     good = sum(1 for r in rows if r["status"] in ok)
     print(f'\n{good}/{len(rows)} compte(s) actif(s)')
 
