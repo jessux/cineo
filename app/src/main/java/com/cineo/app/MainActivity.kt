@@ -596,7 +596,8 @@ fun DetailScreen(vm: AppVm, item: Item) {
                         Icon(Icons.Filled.PlayCircleOutline, null, tint = Color.White)
                     }
                     Column(Modifier.padding(start = 12.dp)) {
-                        Text("${e.num}. ${e.title}", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        val t = e.title.replace(Regex("^.*?S\\d+\\s*E\\d+\\s*-?\\s*"), "").ifBlank { "Épisode ${e.num}" }
+                        Text("${e.num}. $t", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         e.plot?.let { Text(it, fontSize = 12.sp, color = Color.Gray, maxLines = 3, overflow = TextOverflow.Ellipsis) }
                     }
                 }
