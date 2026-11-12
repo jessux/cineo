@@ -86,6 +86,10 @@ class MainActivity : AppCompatActivity() {
 
 @Composable
 fun App(vm: AppVm) {
+    LaunchedEffect(Unit) { vm.checkUpdate() }
+    LaunchedEffect(vm.creds) {
+        while (vm.creds != null) { vm.refreshConns(); delay(15_000) }
+    }
     if (vm.creds == null) { LoginScreen(vm); return }
     if (vm.profile == null) { ProfilesScreen(vm); return }
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -144,6 +148,22 @@ fun App(vm: AppVm) {
                 dismissButton = { TextButton(onClick = { vm.pendingPlay = null }) { Text("Annuler") } },
             )
         }
+    }
+}
+
+/** Badge live : connexions en cours / autorisées, en or quand la limite est atteinte. */
+@Composable
+fun ConnsChip(active: Int, max: Int) {
+    val full = active >= max
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = (if (full) Gold else Accent).copy(alpha = 0.2f),
+        modifier = Modifier.padding(end = 6.dp),
+    ) {
+        Text(
+            "● $active/$max connexions", Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            color = if (full) Gold else Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+        )
     }
 }
 
@@ -244,6 +264,7 @@ fun HomeScreen(vm: AppVm) {
         item {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(16.dp, 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Logo(24); Spacer(Modifier.weight(1f))
+                if (vm.conns.second > 0) ConnsChip(vm.conns.first, vm.conns.second)
                 vm.profile?.let { Avatar(it, 30.dp, Modifier.padding(end = 6.dp).clickable { vm.selectProfile(null) }) }
                 CastButton()
                 IconButton(onClick = { settings = true }) { Icon(Icons.Filled.Settings, "Réglages") }

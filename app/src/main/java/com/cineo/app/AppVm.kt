@@ -105,6 +105,14 @@ class AppVm(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Rafraîchit le compteur de connexions ; garde la valeur précédente en cas d'erreur réseau. */
+    suspend fun refreshConns() {
+        val xt = api ?: return
+        conns = runCatching { xt.connections() }.getOrDefault(conns)
+    }
+
+    fun checkUpdate() { viewModelScope.launch { Updater.checkAndInstall(app) } }
+
     var resumeTick by mutableStateOf(0) // relu au retour du lecteur
     fun resumeOf(c: android.content.Context, i: Item) = Resume.get(c, "$pid|${i.key}")
 
