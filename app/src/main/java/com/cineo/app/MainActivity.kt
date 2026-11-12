@@ -47,6 +47,13 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -143,6 +150,7 @@ fun App(vm: AppVm) {
 // ---------- Connexion ----------
 @Composable
 fun LoginScreen(vm: AppVm) {
+    var m3u by rememberSaveable { mutableStateOf(false) }
     var server by rememberSaveable { mutableStateOf("") }
     var user by rememberSaveable { mutableStateOf("") }
     var pass by rememberSaveable { mutableStateOf("") }
@@ -151,17 +159,35 @@ fun LoginScreen(vm: AppVm) {
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Logo(40)
-        Spacer(Modifier.height(8.dp))
-        Text("Connexion Xtream Codes", color = Color.Gray)
-        Spacer(Modifier.height(32.dp))
-        OutlinedTextField(server, { server = it }, label = { Text("Serveur (http://hote:port)") }, singleLine = true,
+        Spacer(Modifier.height(24.dp))
+        if (vm.accounts.isNotEmpty()) {
+            Text("Comptes enregistrés", color = Color.Gray, fontSize = 13.sp, modifier = Modifier.fillMaxWidth())
+            vm.accounts.forEach { a ->
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(8.dp)).background(Card).tvFocus(RoundedCornerShape(8.dp))
+                    .clickable(enabled = !vm.busy) { vm.login(a.server, a.user, a.pass, a.m3u) }.padding(14.dp, 6.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Icon(if (a.m3u) Icons.Filled.List else Icons.Filled.LiveTv, null, tint = Gold)
+                    Text(a.label, Modifier.weight(1f).padding(horizontal = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    IconButton(onClick = { vm.forgetAccount(a) }) { Icon(Icons.Filled.Close, "Oublier", tint = Color.Gray) }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+        TabRow(if (m3u) 1 else 0, containerColor = Bg) {
+            Tab(!m3u, { m3u = false }, text = { Text("Xtream Codes") })
+            Tab(m3u, { m3u = true }, text = { Text("Lien M3U") })
+        }
+        Spacer(Modifier.height(16.dp))
+        OutlinedTextField(server, { server = it }, label = { Text(if (m3u) "URL de la playlist M3U" else "Serveur (http://hote:port)") }, singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(user, { user = it }, label = { Text("Nom d'utilisateur") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(pass, { pass = it }, label = { Text("Mot de passe") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
+        if (!m3u) {
+            OutlinedTextField(user, { user = it }, label = { Text("Nom d'utilisateur") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(pass, { pass = it }, label = { Text("Mot de passe") }, singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
+        }
         Spacer(Modifier.height(20.dp))
-        Button(onClick = { vm.login(server, user, pass) }, enabled = !vm.busy && server.isNotBlank(),
+        Button(onClick = { vm.login(server, user, pass, m3u) }, enabled = !vm.busy && server.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(8.dp)) {
             if (vm.busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp) else Text("Se connecter", fontWeight = FontWeight.Bold)
         }
@@ -175,15 +201,25 @@ fun Logo(size: Int) = Text(
 )
 
 // ---------- Accueil ----------
-fun AppVm.play(ctx: android.content.Context, item: Item, ep: Episode? = null) = guard { startPlay(ctx, item, ep) }
+/** season = épisodes de la saison : ceux qui suivent `ep` s'enchaînent automatiquement. */
+fun AppVm.play(ctx: android.content.Context, item: Item, ep: Episode? = null, season: List<Episode> = emptyList()) =
+    guard { startPlay(ctx, item, ep, season) }
 
-private fun AppVm.startPlay(ctx: android.content.Context, item: Item, ep: Episode?) {
+private fun AppVm.startPlay(ctx: android.content.Context, item: Item, ep: Episode?, season: List<Episode>) {
     val x = api ?: return
     recordPlay(item)
-    if (ep != null) PlayerActivity.start(ctx, x.url(ep), "${item.name} – ${ep.title}", ep.image ?: item.image,
-        keys = arrayOf("$pid|EP:${ep.id}", "$pid|${item.key}"), ep = ep.id)
-    else PlayerActivity.start(ctx, x.url(item), item.name, item.image, item.kind == Kind.LIVE,
-        keys = if (item.kind == Kind.LIVE) emptyArray() else arrayOf("$pid|${item.key}"))
+    if (ep != null) {
+        val next = season.dropWhile { it.id != ep.id }.ifEmpty { listOf(ep) }
+        PlayerActivity.start(ctx, next.map {
+            PlayItem(x.url(it), "${item.name} – ${it.title}", it.image ?: item.image, listOf("$pid|EP:${it.id}", "$pid|${item.key}"), it.id)
+        })
+    } else PlayerActivity.start(ctx, listOf(PlayItem(x.url(item), item.name, item.image,
+        if (item.kind == Kind.LIVE) emptyList() else listOf("$pid|${item.key}"))), item.kind == Kind.LIVE)
+}
+
+fun AppVm.playReplay(ctx: android.content.Context, item: Item, p: Prog) = guard {
+    val x = api ?: return@guard
+    PlayerActivity.start(ctx, listOf(PlayItem(x.replayUrl(item, p), "${item.name} – ${p.title}", item.image)))
 }
 
 @Composable
@@ -197,14 +233,15 @@ fun HomeScreen(vm: AppVm) {
     val recentMovies = remember(vm.movies) { vm.movies.sortedByDescending { it.added }.take(30) }
     val recentSeries = remember(vm.series) { vm.series.sortedByDescending { it.added }.take(30) }
     val favs = vm.favItems()
+    var settings by remember { mutableStateOf(false) }
+    if (settings) SettingsDialog(vm) { settings = false }
     LazyColumn(Modifier.fillMaxSize()) {
         item {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(16.dp, 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Logo(24); Spacer(Modifier.weight(1f))
                 vm.profile?.let { Avatar(it, 30.dp, Modifier.padding(end = 6.dp).clickable { vm.selectProfile(null) }) }
                 CastButton()
-                IconButton(onClick = { vm.loadAll() }) { Icon(Icons.Filled.Refresh, "Actualiser") }
-                IconButton(onClick = { vm.logout() }) { Icon(Icons.AutoMirrored.Filled.Logout, "Déconnexion") }
+                IconButton(onClick = { settings = true }) { Icon(Icons.Filled.Settings, "Réglages") }
             }
         }
         if (reco.isNotEmpty()) item { HeroCarousel(vm, reco.take(8), if (vm.history.isEmpty()) "À la une" else "Recommandé pour vous") }
@@ -286,7 +323,7 @@ fun PosterRow(title: String, items: List<Item>, progress: (Item) -> Float? = { n
 @Composable
 fun Poster(item: Item, modifier: Modifier = Modifier, progress: Float? = null, onClick: () -> Unit) {
     var state by remember(item.key) { mutableIntStateOf(if (item.image == null) 2 else 0) } // 0 chargement, 1 ok, 2 erreur
-    Box(modifier.aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(Card).clickable(onClick = onClick)) {
+    Box(modifier.tvFocus().aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(Card).clickable(onClick = onClick)) {
         when (state) {
             0 -> LoadingLogo(Modifier.fillMaxSize())
             2 -> Text(item.name, Modifier.align(Alignment.Center).padding(8.dp), fontSize = 12.sp, textAlign = TextAlign.Center, color = Color.LightGray)
@@ -301,6 +338,12 @@ fun Poster(item: Item, modifier: Modifier = Modifier, progress: Float? = null, o
             }
         }
     }
+}
+
+/** Navigation à la télécommande (Android TV) : contour + léger zoom sur l'élément sélectionné. */
+fun Modifier.tvFocus(shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(6.dp)): Modifier = composed {
+    var f by remember { mutableStateOf(false) }
+    this.onFocusChanged { f = it.isFocused }.scale(if (f) 1.06f else 1f).border(if (f) 3.dp else 0.dp, if (f) Color.White else Color.Transparent, shape)
 }
 
 fun openUrl(ctx: android.content.Context, url: String) = runCatching {
@@ -354,20 +397,74 @@ fun LiveScreen(vm: AppVm) {
                 FilterChip(selected = c.id == cat, onClick = { cat = c.id }, label = { Text(c.name) })
             }
         }
-        ChannelGrid(vm.liveByCat[cat].orEmpty()) { ch -> vm.play(ctx, ch) }
+        Text("Appui long sur une chaîne : guide TV et replay", Modifier.padding(16.dp, 8.dp, 16.dp, 0.dp), fontSize = 11.sp, color = Color.Gray)
+        ChannelGrid(vm, vm.liveByCat[cat].orEmpty()) { ch -> vm.play(ctx, ch) }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ChannelGrid(list: List<Item>, onClick: (Item) -> Unit) {
+fun ChannelGrid(vm: AppVm, list: List<Item>, onClick: (Item) -> Unit) {
+    var sheet by remember { mutableStateOf<Item?>(null) }
     LazyVerticalGrid(GridCells.Adaptive(150.dp), contentPadding = PaddingValues(16.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items(list, key = { it.key }) { ch ->
-            Column(Modifier.clip(RoundedCornerShape(8.dp)).background(Card).clickable { onClick(ch) }.padding(8.dp)) {
+            LaunchedEffect(ch.id) { vm.loadNow(ch) }
+            val now = vm.nowEpg[ch.id]?.firstOrNull { it.isNow }
+            Column(Modifier.tvFocus(RoundedCornerShape(8.dp)).clip(RoundedCornerShape(8.dp)).background(Card)
+                .combinedClickable(onClick = { onClick(ch) }, onLongClick = { sheet = ch }).padding(8.dp)) {
                 AsyncImage(ch.image, null, Modifier.fillMaxWidth().aspectRatio(16f / 9f), contentScale = ContentScale.Fit)
-                Text(ch.name, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(ch.name, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                if (now != null) {
+                    Text(now.title, fontSize = 11.sp, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    LinearProgressIndicator({ now.progress }, Modifier.fillMaxWidth().padding(top = 4.dp).height(3.dp))
+                }
+                if (ch.archive) Text("Replay", fontSize = 10.sp, color = Gold)
             }
         }
+    }
+    sheet?.let { ChannelSheet(vm, it) { sheet = null } }
+}
+
+/** Guide du jour d'une chaîne ; les programmes passés sont rejouables si la chaîne a le replay. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ChannelSheet(vm: AppVm, ch: Item, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    var progs by remember(ch.id) { mutableStateOf<List<Prog>?>(null) }
+    LaunchedEffect(ch.id) { progs = runCatching { vm.api!!.epg(ch, true) }.getOrDefault(emptyList()) }
+    val fmt = remember { java.text.SimpleDateFormat("HH:mm", java.util.Locale.FRANCE) }
+    val nowS = System.currentTimeMillis() / 1000
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Card) {
+        Text(ch.name, Modifier.padding(16.dp, 0.dp), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Button(onClick = { onDismiss(); vm.play(ctx, ch) }, Modifier.padding(16.dp).fillMaxWidth()) {
+            Icon(Icons.Filled.PlayArrow, null); Text("Regarder en direct")
+        }
+        val list = progs
+        when {
+            list == null -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(16.dp))
+            list.isEmpty() -> Text("Pas de guide TV pour cette chaîne", Modifier.padding(16.dp), color = Color.Gray)
+            else -> {
+                val state = rememberLazyListState(list.indexOfFirst { it.end > nowS }.coerceAtLeast(0))
+                LazyColumn(state = state, modifier = Modifier.heightIn(max = 480.dp)) {
+                    items(list) { p ->
+                        val past = p.end <= nowS
+                        val canReplay = past && ch.archive
+                        Row(Modifier.fillMaxWidth().then(if (canReplay) Modifier.clickable { onDismiss(); vm.playReplay(ctx, ch, p) } else Modifier)
+                            .background(if (p.isNow) Accent.copy(alpha = 0.15f) else Color.Transparent).padding(16.dp, 10.dp)) {
+                            Text(fmt.format(java.util.Date(p.start * 1000)), Modifier.width(52.dp), color = if (p.isNow) Gold else Color.Gray, fontSize = 13.sp)
+                            Column(Modifier.weight(1f)) {
+                                Text(p.title, fontWeight = if (p.isNow) FontWeight.Bold else FontWeight.Normal, fontSize = 14.sp,
+                                    color = if (past && !canReplay) Color.Gray else Color.White)
+                                if (p.desc.isNotBlank()) Text(p.desc, fontSize = 12.sp, color = Color.Gray, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (canReplay) Icon(Icons.Filled.Replay, "Revoir", tint = Gold)
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.navigationBarsPadding().height(16.dp))
     }
 }
 
@@ -470,7 +567,7 @@ fun DetailScreen(vm: AppVm, item: Item) {
                 }
             }
             items(eps[season].orEmpty(), key = { it.id }) { e ->
-                Row(Modifier.fillMaxWidth().clickable { vm.play(ctx, item, e) }.padding(16.dp, 8.dp)) {
+                Row(Modifier.fillMaxWidth().tvFocus(RoundedCornerShape(4.dp)).clickable { vm.play(ctx, item, e, eps[season].orEmpty()) }.padding(16.dp, 8.dp)) {
                     Box(Modifier.width(130.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(4.dp)).background(Card), Alignment.Center) {
                         AsyncImage(e.image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                         Icon(Icons.Filled.PlayCircleOutline, null, tint = Color.White)

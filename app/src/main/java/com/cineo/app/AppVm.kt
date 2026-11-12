@@ -3,6 +3,7 @@ package com.cineo.app
 import android.app.Application
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -14,10 +15,35 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     private val prefs = app.getSharedPreferences("cineo", 0)
 
     var creds by mutableStateOf(
-        prefs.getString("server", null)?.let { Creds(it, prefs.getString("user", "")!!, prefs.getString("pass", "")!!) }
+        prefs.getString("server", null)?.let { Creds(it, prefs.getString("user", "")!!, prefs.getString("pass", "")!!, prefs.getBoolean("m3u", false)) }
     )
         private set
-    val api get() = creds?.let { Xtream(it) }
+    private var x: Xtream? = null
+    val api: Xtream? get() = creds?.let { c -> x?.takeIf { it.c == c } ?: Xtream(c, app.cacheDir).also { x = it } }
+    private val app get() = getApplication<Application>()
+
+    // ---- Comptes enregistrés ----
+    val accounts = mutableStateListOf<Creds>().apply {
+        addAll(prefs.getString("accounts", "")!!.split("\n").mapNotNull(Creds::parse))
+    }
+    private fun saveAccounts() = prefs.edit().putString("accounts", accounts.joinToString("\n") { it.encode() }).apply()
+    fun forgetAccount(c: Creds) { accounts.remove(c); saveAccounts() }
+
+    // ---- Contrôle parental ----
+    var pin by mutableStateOf(prefs.getString("pin", null)); private set
+    var showAdult by mutableStateOf(false); private set
+    fun changePin(p: String) { pin = p; prefs.edit().putString("pin", p).apply() }
+    fun unlockAdult(p: String): Boolean { if (p != pin) return false; showAdult = true; publish(); return true }
+    fun lockAdult() { showAdult = false; publish() }
+
+    // ---- Guide TV : programme en cours par chaîne, chargé à la demande ----
+    val nowEpg = mutableStateMapOf<String, List<Prog>>()
+    private val epgGate = kotlinx.coroutines.sync.Semaphore(4)
+    fun loadNow(i: Item) {
+        if (nowEpg.containsKey(i.id) || creds?.m3u == true) return
+        nowEpg[i.id] = emptyList()
+        viewModelScope.launch { epgGate.acquire(); try { nowEpg[i.id] = runCatching { api!!.epg(i, false) }.getOrDefault(emptyList()) } finally { epgGate.release() } }
+    }
 
     var busy by mutableStateOf(false); private set
     var error by mutableStateOf<String?>(null); private set
@@ -130,22 +156,24 @@ class AppVm(app: Application) : AndroidViewModel(app) {
         return favs.mapNotNull { all[it] }
     }
 
-    fun login(server: String, user: String, pass: String) {
-        var s = server; var u = user.trim(); var p = pass.trim()
-        // Accepte aussi un lien M3U complet : http://hote:port/get.php?username=X&password=Y
+    fun login(server: String, user: String, pass: String, m3u: Boolean = false) {
+        var u = user.trim(); var p = pass.trim()
+        // Un lien M3U Xtream (get.php?username=X&password=Y) est converti en connexion Xtream, plus complète
+        val xtreamLink = "username=" in server && "password=" in server
         Regex("username=([^&]+)").find(server)?.let { u = it.groupValues[1] }
         Regex("password=([^&]+)").find(server)?.let { p = it.groupValues[1] }
-        s = Xtream.normalize(s)
-        val c = Creds(s, u, p)
+        val c = if (m3u && !xtreamLink) Creds(server.trim(), "", "", true) else Creds(Xtream.normalize(server), u, p)
         viewModelScope.launch {
             busy = true; error = null
             try {
                 if (Xtream(c).login()) {
-                    prefs.edit().putString("server", s).putString("user", u).putString("pass", p).apply()
+                    prefs.edit().putString("server", c.server).putString("user", c.user).putString("pass", c.pass).putBoolean("m3u", c.m3u).apply()
+                    accounts.remove(c); accounts.add(0, c); saveAccounts()
+                    raw = null; publish()
                     creds = c
                     busy = false
                     loadAll()
-                } else error = "Identifiants refusés par le serveur"
+                } else error = if (c.m3u) "Playlist M3U invalide" else "Identifiants refusés par le serveur"
             } catch (e: Exception) { error = "Connexion impossible : ${e.message}" }
             busy = false
         }
@@ -154,31 +182,51 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     fun logout() {
         prefs.edit().remove("server").remove("user").remove("pass").apply()
         selectProfile(null)
-        creds = null; movies = emptyList(); series = emptyList(); live = emptyList(); detail = null
+        creds = null; raw = null; publish(); detail = null; nowEpg.clear()
     }
 
-    init { if (creds != null) loadAll() }
+
+    private class Raw(
+        val mc: List<Category>, val m: List<Item>, val sc: List<Category>, val s: List<Item>, val lc: List<Category>, val l: List<Item>,
+    )
+    private var raw: Raw? = null
+
+    private suspend fun fetchAll(x: Xtream, cache: Boolean) = kotlinx.coroutines.coroutineScope {
+        val mc = async { x.categories(Kind.MOVIE, cache) }; val m = async { x.streams(Kind.MOVIE, cache) }
+        val sc = async { x.categories(Kind.SERIES, cache) }; val s = async { x.streams(Kind.SERIES, cache) }
+        val lc = async { x.categories(Kind.LIVE, cache) }; val l = async { x.streams(Kind.LIVE, cache) }
+        Raw(mc.await(), m.await(), sc.await(), s.await(), lc.await(), l.await())
+    }
+
+    /** Applique le filtre parental puis expose les listes à l'écran. */
+    private fun publish() {
+        val r = raw
+        val adultName = Regex("(?i)adult|xxx|\\+ ?18|18 ?\\+|porn")
+        fun ok(cats: List<Category>) = cats.filter { showAdult || !adultName.containsMatchIn(it.name) }.map { it.id }.toSet()
+        val okM = ok(r?.mc.orEmpty()); val okS = ok(r?.sc.orEmpty()); val okL = ok(r?.lc.orEmpty())
+        fun List<Item>.f(okC: Set<String>, cats: List<Category>) =
+            filter { showAdult || (!it.adult && (it.categoryId in okC || cats.none { c -> c.id == it.categoryId })) }
+        movies = r?.m.orEmpty().f(okM, r?.mc.orEmpty()); series = r?.s.orEmpty().f(okS, r?.sc.orEmpty()); live = r?.l.orEmpty().f(okL, r?.lc.orEmpty())
+        moviesByCat = movies.groupBy { it.categoryId }
+        seriesByCat = series.groupBy { it.categoryId }
+        liveByCat = live.groupBy { it.categoryId }
+        movieCats = r?.mc.orEmpty().filter { moviesByCat.containsKey(it.id) }
+        seriesCats = r?.sc.orEmpty().filter { seriesByCat.containsKey(it.id) }
+        liveCats = r?.lc.orEmpty().filter { liveByCat.containsKey(it.id) }
+    }
 
     fun loadAll() {
         val x = api ?: return
         if (busy) return
         viewModelScope.launch {
             busy = true; error = null
-            try {
-                val mc = async { x.categories(Kind.MOVIE) }; val m = async { x.streams(Kind.MOVIE) }
-                val sc = async { x.categories(Kind.SERIES) }; val s = async { x.streams(Kind.SERIES) }
-                val lc = async { x.categories(Kind.LIVE) }; val l = async { x.streams(Kind.LIVE) }
-                movies = m.await(); series = s.await(); live = l.await()
-                moviesByCat = movies.groupBy { it.categoryId }
-                seriesByCat = series.groupBy { it.categoryId }
-                liveByCat = live.groupBy { it.categoryId }
-                movieCats = mc.await().filter { moviesByCat.containsKey(it.id) }
-                seriesCats = sc.await().filter { seriesByCat.containsKey(it.id) }
-                liveCats = lc.await().filter { liveByCat.containsKey(it.id) }
-            } catch (e: Exception) { error = "Chargement impossible : ${e.message}" }
+            if (raw == null) runCatching { raw = fetchAll(x, true); publish() } // instantané depuis le cache
+            try { raw = fetchAll(x, false); publish() }
+            catch (e: Exception) { if (raw == null) error = "Chargement impossible : ${e.message}" }
             busy = false
         }
     }
+    init { if (creds != null) loadAll() } // en dernier : toutes les propriétés sont initialisées
 }
 
 data class Profile(val id: String, val name: String, val color: Int) {
