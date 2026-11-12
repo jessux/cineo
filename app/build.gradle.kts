@@ -10,15 +10,26 @@ android {
         applicationId = "com.cineo.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // En CI : numéro de build GitHub (toujours croissant)
+        versionCode = (System.getenv("VERSION_CODE") ?: "1").toInt()
+        versionName = "1.2.$versionCode"
+    }
+    // Clé de signature fournie par variables d'environnement (secrets GitHub en CI)
+    val ks = System.getenv("KEYSTORE_FILE")
+    signingConfigs {
+        if (ks != null) create("release") {
+            storeFile = file(ks)
+            storePassword = System.getenv("KEYSTORE_PASS")
+            keyAlias = "cineo"
+            keyPassword = System.getenv("KEYSTORE_PASS")
+        }
     }
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (ks != null) "release" else "debug")
         }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
