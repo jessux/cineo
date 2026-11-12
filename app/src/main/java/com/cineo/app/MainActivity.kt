@@ -1,7 +1,7 @@
 package com.cineo.app
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -42,19 +42,28 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.delay
 
 val Bg = Color(0xFF0E0D13)
 val Card = Color(0xFF1C1A24)
 val Accent = Color(0xFF8B6CFF)
 val Gold = Color(0xFFFFB547)
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        Cast.context(this) // démarre la découverte des Chromecast
         setContent {
+            var splash by rememberSaveable { mutableStateOf(true) }
             MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Bg, secondary = Gold)) {
-                App(viewModel())
+                val vm: AppVm = viewModel()
+                App(vm)
+                if (splash) SplashScreen { splash = false }
             }
         }
     }
@@ -63,7 +72,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun App(vm: AppVm) {
     if (vm.creds == null) { LoginScreen(vm); return }
-    LaunchedEffect(Unit) { if (vm.movies.isEmpty() && vm.live.isEmpty()) vm.loadAll() }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val tabs = listOf<Pair<String, ImageVector>>(
         "Accueil" to Icons.Filled.Home, "Films" to Icons.Filled.Movie, "Séries" to Icons.Filled.Tv,
@@ -147,49 +155,87 @@ fun Logo(size: Int) = Text(
 )
 
 // ---------- Accueil ----------
+fun AppVm.play(ctx: android.content.Context, item: Item, ep: Episode? = null) {
+    val x = api ?: return
+    recordPlay(item)
+    if (ep != null) PlayerActivity.start(ctx, x.url(ep), "${item.name} – ${ep.title}", ep.image ?: item.image)
+    else PlayerActivity.start(ctx, x.url(item), item.name, item.image, item.kind == Kind.LIVE)
+}
+
 @Composable
 fun HomeScreen(vm: AppVm) {
-    val hero = remember(vm.movies) { vm.movies.filter { it.image != null }.randomOrNull() ?: vm.series.randomOrNull() }
+    val reco = remember(vm.movies, vm.series, vm.history.size, vm.favs.size) { vm.recommendations() }
+    val because = remember(vm.movies, vm.series, vm.history.firstOrNull()) { vm.becauseYouWatched() }
+    val watched = vm.watched().take(20)
     val recentMovies = remember(vm.movies) { vm.movies.sortedByDescending { it.added }.take(30) }
     val recentSeries = remember(vm.series) { vm.series.sortedByDescending { it.added }.take(30) }
-    val ctx = LocalContext.current
     val favs = vm.favItems()
     LazyColumn(Modifier.fillMaxSize()) {
         item {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(16.dp, 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Logo(24); Spacer(Modifier.weight(1f))
+                CastButton()
                 IconButton(onClick = { vm.loadAll() }) { Icon(Icons.Filled.Refresh, "Actualiser") }
                 IconButton(onClick = { vm.logout() }) { Icon(Icons.AutoMirrored.Filled.Logout, "Déconnexion") }
             }
         }
-        hero?.let { h ->
-            item {
-                Box(Modifier.fillMaxWidth().height(460.dp)) {
-                    AsyncImage(h.image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Bg))))
-                    Column(Modifier.align(Alignment.BottomCenter).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(h.name, fontSize = 26.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2)
-                        Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(onClick = {
-                                if (h.kind == Kind.MOVIE) vm.api?.let { PlayerActivity.start(ctx, it.url(h)) } else vm.detail = h
-                            }, colors = ButtonDefaults.buttonColors(Color.White, Color.Black), shape = RoundedCornerShape(6.dp)) {
-                                Icon(Icons.Filled.PlayArrow, null); Text("Lecture", fontWeight = FontWeight.Bold)
-                            }
-                            FilledTonalButton(onClick = { vm.detail = h }, shape = RoundedCornerShape(6.dp)) {
-                                Icon(Icons.Filled.Info, null); Spacer(Modifier.width(4.dp)); Text("Infos")
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        if (reco.isNotEmpty()) item { HeroCarousel(vm, reco.take(8), if (vm.history.isEmpty()) "À la une" else "Recommandé pour vous") }
+        if (watched.isNotEmpty()) item { PosterRow("Récemment regardés", watched) { vm.detail = it } }
         if (favs.isNotEmpty()) item { PosterRow("Ma liste", favs) { vm.detail = it } }
+        if (reco.size > 8) item { PosterRow("Sélectionnés pour vous", reco.drop(8)) { vm.detail = it } }
+        because?.let { (src, list) -> item { PosterRow("Parce que vous avez regardé ${src.name}", list) { vm.detail = it } } }
         item { PosterRow("Films ajoutés récemment", recentMovies) { vm.detail = it } }
         item { PosterRow("Séries récentes", recentSeries) { vm.detail = it } }
         items(vm.movieCats.take(10), key = { "m" + it.id }) { c -> PosterRow(c.name, vm.moviesByCat[c.id].orEmpty()) { vm.detail = it } }
         items(vm.seriesCats.take(10), key = { "s" + it.id }) { c -> PosterRow(c.name, vm.seriesByCat[c.id].orEmpty()) { vm.detail = it } }
         item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+@Composable
+fun HeroCarousel(vm: AppVm, list: List<Item>, label: String) {
+    val ctx = LocalContext.current
+    val pager = rememberPagerState { list.size }
+    LaunchedEffect(pager, list) {
+        while (true) {
+            delay(6000)
+            if (!pager.isScrollInProgress) pager.animateScrollToPage((pager.currentPage + 1) % list.size, animationSpec = tween(700))
+        }
+    }
+    Box(Modifier.fillMaxWidth().height(480.dp)) {
+        HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
+            val h = list[page]
+            val off = (pager.currentPage - page) + pager.currentPageOffsetFraction
+            Box(Modifier.fillMaxSize().clickable { vm.detail = h }) {
+                AsyncImage(h.image, null, Modifier.fillMaxSize().graphicsLayer {
+                    translationX = off * size.width * 0.4f; val sc = 1.1f - 0.1f * (1 - kotlin.math.abs(off)).coerceIn(0f, 1f); scaleX = sc; scaleY = sc
+                }, contentScale = ContentScale.Crop)
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Bg.copy(alpha = 0.85f), Bg))))
+                Column(Modifier.align(Alignment.BottomCenter).padding(16.dp, 0.dp, 16.dp, 34.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(label.uppercase(), color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                    Text(h.name, fontSize = 26.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(listOfNotNull(if (h.kind == Kind.MOVIE) "Film" else "Série", h.rating.ifBlank { null }?.let { "★ $it" }).joinToString(" · "),
+                        color = Color.LightGray, fontSize = 12.sp)
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = { if (h.kind == Kind.MOVIE) vm.play(ctx, h) else vm.detail = h },
+                            colors = ButtonDefaults.buttonColors(Color.White, Color.Black), shape = RoundedCornerShape(6.dp)) {
+                            Icon(Icons.Filled.PlayArrow, null); Text("Lecture", fontWeight = FontWeight.Bold)
+                        }
+                        FilledTonalButton(onClick = { vm.detail = h }, shape = RoundedCornerShape(6.dp)) {
+                            Icon(Icons.Filled.Info, null); Spacer(Modifier.width(4.dp)); Text("Infos")
+                        }
+                    }
+                }
+            }
+        }
+        Row(Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            repeat(list.size) { i ->
+                val sel = i == pager.currentPage
+                Box(Modifier.height(4.dp).width(if (sel) 18.dp else 6.dp).clip(RoundedCornerShape(2.dp))
+                    .background(if (sel) Gold else Color.Gray.copy(alpha = 0.6f)))
+            }
+        }
     }
 }
 
@@ -229,13 +275,16 @@ fun LiveScreen(vm: AppVm) {
     var cat by rememberSaveable { mutableStateOf(vm.liveCats.firstOrNull()?.id) }
     val ctx = LocalContext.current
     Column(Modifier.fillMaxSize()) {
-        Text("TV en direct", Modifier.statusBarsPadding().padding(16.dp, 12.dp), fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(16.dp, 12.dp, 8.dp, 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("TV en direct", Modifier.weight(1f), fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            CastButton()
+        }
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(vm.liveCats, key = { it.id }) { c ->
                 FilterChip(selected = c.id == cat, onClick = { cat = c.id }, label = { Text(c.name) })
             }
         }
-        ChannelGrid(vm.liveByCat[cat].orEmpty()) { ch -> vm.api?.let { PlayerActivity.start(ctx, it.url(ch)) } }
+        ChannelGrid(vm.liveByCat[cat].orEmpty()) { ch -> vm.play(ctx, ch) }
     }
 }
 
@@ -269,7 +318,7 @@ fun SearchScreen(vm: AppVm) {
             items(res, key = { it.key }) { Poster(it) { vm.detail = it } }
             items(resLive, key = { it.key }) { ch ->
                 Column(Modifier.clip(RoundedCornerShape(6.dp)).background(Card)
-                    .clickable { vm.api?.let { PlayerActivity.start(ctx, it.url(ch)) } }.padding(6.dp)) {
+                    .clickable { vm.play(ctx, ch) }.padding(6.dp)) {
                     AsyncImage(ch.image, null, Modifier.fillMaxWidth().aspectRatio(16f / 9f), contentScale = ContentScale.Fit)
                     Text(ch.name, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
@@ -298,6 +347,7 @@ fun DetailScreen(vm: AppVm, item: Item) {
                 IconButton(onClick = { vm.detail = null }, Modifier.statusBarsPadding().padding(4.dp)) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour")
                 }
+                CastButton(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(4.dp))
             }
         }
         item {
@@ -307,7 +357,7 @@ fun DetailScreen(vm: AppVm, item: Item) {
                 if (meta.isNotBlank()) Text(meta, color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
                 Spacer(Modifier.height(14.dp))
                 if (item.kind == Kind.MOVIE) {
-                    Button(onClick = { vm.api?.let { PlayerActivity.start(ctx, it.url(item)) } },
+                    Button(onClick = { vm.play(ctx, item) },
                         Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(6.dp),
                         colors = ButtonDefaults.buttonColors(Color.White, Color.Black)) {
                         Icon(Icons.Filled.PlayArrow, null); Text("Lecture", fontWeight = FontWeight.Bold)
@@ -330,7 +380,7 @@ fun DetailScreen(vm: AppVm, item: Item) {
                 }
             }
             items(eps[season].orEmpty(), key = { it.id }) { e ->
-                Row(Modifier.fillMaxWidth().clickable { vm.api?.let { PlayerActivity.start(ctx, it.url(e)) } }.padding(16.dp, 8.dp)) {
+                Row(Modifier.fillMaxWidth().clickable { vm.play(ctx, item, e) }.padding(16.dp, 8.dp)) {
                     Box(Modifier.width(130.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(4.dp)).background(Card), Alignment.Center) {
                         AsyncImage(e.image, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                         Icon(Icons.Filled.PlayCircleOutline, null, tint = Color.White)

@@ -39,6 +39,45 @@ class AppVm(app: Application) : AndroidViewModel(app) {
         if (!favs.remove(i.key)) favs.add(0, i.key)
         prefs.edit().putStringSet("favs", favs.toSet()).apply()
     }
+    // ---- Profil de goût : historique de lecture + Ma liste ----
+    val history = mutableStateListOf<String>().apply {
+        addAll(prefs.getString("history", "")!!.split("\n").filter { it.isNotBlank() })
+    }
+
+    fun recordPlay(i: Item) {
+        if (i.kind == Kind.LIVE) return
+        history.remove(i.key); history.add(0, i.key)
+        while (history.size > 100) history.removeAt(history.lastIndex)
+        prefs.edit().putString("history", history.joinToString("\n")).apply()
+    }
+
+    private fun index() = (movies + series).associateBy { it.key }
+    fun watched(): List<Item> = index().let { all -> history.mapNotNull { all[it] } }
+
+    /** Score par catégorie : lectures récentes pèsent plus, Ma liste compte aussi. */
+    fun recommendations(limit: Int = 30): List<Item> {
+        val score = HashMap<String, Int>()
+        watched().forEachIndexed { n, it -> score.merge("${it.kind}:${it.categoryId}", if (n < 5) 3 else 1, Int::plus) }
+        favItems().forEach { score.merge("${it.kind}:${it.categoryId}", 2, Int::plus) }
+        val seen = history.toSet()
+        val pool = (movies + series).filter { it.key !in seen && it.image != null }
+        if (score.isEmpty()) // pas encore de profil : récents les mieux notés
+            return pool.sortedByDescending { it.added }.take(300).sortedByDescending { it.rating.toDoubleOrNull() ?: 0.0 }.take(limit)
+        return pool.filter { score.containsKey("${it.kind}:${it.categoryId}") }
+            .sortedWith(compareByDescending<Item> { score["${it.kind}:${it.categoryId}"] }
+                .thenByDescending { it.rating.toDoubleOrNull() ?: 0.0 }.thenByDescending { it.added })
+            .take(limit * 3).shuffled().take(limit)
+    }
+
+    /** "Parce que vous avez regardé X" */
+    fun becauseYouWatched(): Pair<Item, List<Item>>? {
+        val last = watched().firstOrNull() ?: return null
+        val seen = history.toSet()
+        val list = (if (last.kind == Kind.MOVIE) moviesByCat else seriesByCat)[last.categoryId].orEmpty()
+            .filter { it.key !in seen }.shuffled().take(20)
+        return if (list.isEmpty()) null else last to list
+    }
+
     fun favItems(): List<Item> {
         val all = (movies + series).associateBy { it.key }
         return favs.mapNotNull { all[it] }
@@ -69,8 +108,11 @@ class AppVm(app: Application) : AndroidViewModel(app) {
         creds = null; movies = emptyList(); series = emptyList(); live = emptyList(); detail = null
     }
 
+    init { if (creds != null) loadAll() }
+
     fun loadAll() {
         val x = api ?: return
+        if (busy) return
         viewModelScope.launch {
             busy = true; error = null
             try {

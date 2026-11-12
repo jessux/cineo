@@ -53,6 +53,9 @@ class PlayerActivity : ComponentActivity() {
     override fun onDestroy() { player?.release(); player = null; super.onDestroy() }
 
     companion object {
-        fun start(ctx: Context, url: String) = ctx.startActivity(Intent(ctx, PlayerActivity::class.java).putExtra("url", url))
+        fun start(ctx: Context, url: String, title: String = "", image: String? = null, live: Boolean = false) {
+            if (Cast.play(ctx, url, title, image, live)) return
+            ctx.startActivity(Intent(ctx, PlayerActivity::class.java).putExtra("url", url))
+        }
     }
 }
