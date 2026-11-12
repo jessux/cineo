@@ -35,4 +35,6 @@ jobs:
         run: |
           V="1.2.${{ github.run_number }}"
           cp app/build/outputs/apk/release/app-release.apk "Cineo-$V.apk"
-          gh release create "v$V" "Cineo-$V.apk" --target "$GITHUB_SHA" --title "Cinéo $V" --generate-notes
+          sed -i "/<addon /s/version=\"[^\"]*\"/version=\"$V\"/" kodi/plugin.video.cineo/addon.xml
+          (cd kodi && zip -qr "../plugin.video.cineo-$V.zip" plugin.video.cineo)
+          gh release create "v$V" "Cineo-$V.apk" "plugin.video.cineo-$V.zip" --target "$GITHUB_SHA" --title "Cinéo $V" --generate-notes
