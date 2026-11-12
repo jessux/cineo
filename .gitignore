@@ -3,3 +3,5 @@ build/
 local.properties
 *.apk
 !release/Cineo.apk
+__pycache__/
+*.pyc
