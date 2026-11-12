@@ -48,18 +48,30 @@ def api(server, user, pwd, action=None):
         return json.loads(r.read().decode("utf-8", "replace"))
 
 
-def count(server, user, pwd, action):
+FR = re.compile(r"\b(fr|france|français|francais|french|vf|vff|fr\|)\b|🇫🇷|^fr |fr -|\bqc\b|québec|quebec", re.I)
+
+
+def count(server, user, pwd, stream_action, cat_action):
+    """Retourne (total, fr) : total de flux et ceux des catégories françaises."""
     try:
-        d = api(server, user, pwd, action)
-        return len(d) if isinstance(d, list) else 0
+        cats = api(server, user, pwd, cat_action)
+        fr_ids = {str(c.get("category_id")) for c in cats if isinstance(c, dict) and FR.search(c.get("category_name", ""))}
+        streams = api(server, user, pwd, stream_action)
+        if not isinstance(streams, list):
+            return 0, 0
+        total = len(streams)
+        frn = sum(1 for x in streams if str(x.get("category_id")) in fr_ids)
+        return total, frn
     except Exception:
-        return -1
+        return -1, -1
 
 
 def check(acc):
     server, user, pwd = acc
     row = {"server": server, "user": user, "pass": pwd, "status": "?",
-           "expire": "", "trial": "", "cons": "", "films": "", "series": "", "live": "", "note": ""}
+           "expire": "", "trial": "", "cons": "", "max_cons": "", "active_cons": "",
+           "films": "", "films_fr": "", "series": "", "series_fr": "",
+           "live": "", "live_fr": "", "note": ""}
     try:
         info = api(server, user, pwd).get("user_info", {})
     except Exception as e:
@@ -82,9 +94,11 @@ def check(acc):
         row["expire"] = "illimité"
     row["trial"] = "essai" if str(info.get("is_trial")) == "1" else ""
     row["cons"] = f'{info.get("active_cons","?")}/{info.get("max_connections","?")}'
-    row["films"] = count(server, user, pwd, "get_vod_streams")
-    row["series"] = count(server, user, pwd, "get_series")
-    row["live"] = count(server, user, pwd, "get_live_streams")
+    row["max_cons"] = info.get("max_connections", "?")
+    row["active_cons"] = info.get("active_cons", "?")
+    row["films"], row["films_fr"] = count(server, user, pwd, "get_vod_streams", "get_vod_categories")
+    row["series"], row["series_fr"] = count(server, user, pwd, "get_series", "get_series_categories")
+    row["live"], row["live_fr"] = count(server, user, pwd, "get_live_streams", "get_live_categories")
     return row
 
 
@@ -120,8 +134,11 @@ def main():
         if r["note"]:
             print(f'     {r["note"]}')
         elif r["status"] not in ("INJOIGNABLE", "REFUSÉ"):
-            print(f'     exp {r["expire"] or "?"} {r["trial"]} · connexions {r["cons"]} · '
-                  f'films {r["films"]} séries {r["series"]} direct {r["live"]}')
+            print(f'     Expiration : {r["expire"] or "?"} {r["trial"]}')
+            print(f'     Connexions simultanées : {r["active_cons"]} en cours / {r["max_cons"]} autorisée(s)')
+            print(f'     Films   : {r["films"]:>6} (FR {r["films_fr"]})')
+            print(f'     Séries  : {r["series"]:>6} (FR {r["series_fr"]})')
+            print(f'     Chaînes : {r["live"]:>6} (FR {r["live_fr"]})')
     good = sum(1 for r in rows if r["status"] in ok)
     print(f'\n{good}/{len(rows)} compte(s) actif(s)')
 
