@@ -22,7 +22,7 @@ fun SettingsDialog(vm: AppVm, onDismiss: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Compte", color = Gold, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Text(vm.creds?.label.orEmpty(), color = Color.LightGray, fontSize = 13.sp)
+                Text(vm.creds?.let { vm.accountNames[it.encode()] ?: it.label }.orEmpty(), color = Color.LightGray, fontSize = 13.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { vm.loadAll(); onDismiss() }) { Text("Actualiser") }
                     OutlinedButton(onClick = { onDismiss(); vm.logout() }) { Text("Changer de compte") }

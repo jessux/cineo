@@ -174,6 +174,17 @@ fun LoginScreen(vm: AppVm) {
     var server by rememberSaveable { mutableStateOf("") }
     var user by rememberSaveable { mutableStateOf("") }
     var pass by rememberSaveable { mutableStateOf("") }
+    var renaming by remember { mutableStateOf<Creds?>(null) }
+    var newName by remember { mutableStateOf("") }
+    renaming?.let { a ->
+        AlertDialog(
+            onDismissRequest = { renaming = null }, containerColor = Card,
+            title = { Text("Nom de la connexion") },
+            text = { OutlinedTextField(newName, { newName = it }, singleLine = true, placeholder = { Text("Ex : Salon") }) },
+            confirmButton = { TextButton(onClick = { vm.renameAccount(a, newName); renaming = null }) { Text("OK") } },
+            dismissButton = { TextButton(onClick = { renaming = null }) { Text("Annuler") } },
+        )
+    }
     Column(
         Modifier.fillMaxSize().background(Bg).systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
@@ -188,11 +199,12 @@ fun LoginScreen(vm: AppVm) {
                     verticalAlignment = Alignment.CenterVertically) {
                     Icon(if (a.m3u) Icons.Filled.List else Icons.Filled.LiveTv, null, tint = Gold)
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        Text(a.server.substringAfter("://").substringBefore("/"), color = Color.White, fontWeight = FontWeight.SemiBold,
+                        Text(vm.accountNames[a.encode()] ?: a.server.substringAfter("://").substringBefore("/"), color = Color.White, fontWeight = FontWeight.SemiBold,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(if (a.m3u) "Playlist M3U" else "Xtream · ${a.user}", color = Color.Gray, fontSize = 12.sp,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
+                    IconButton(onClick = { renaming = a; newName = vm.accountNames[a.encode()] ?: "" }) { Icon(Icons.Filled.Edit, "Renommer", tint = Color.Gray) }
                     IconButton(onClick = { vm.forgetAccount(a) }) { Icon(Icons.Filled.Close, "Oublier", tint = Color.Gray) }
                 }
             }
