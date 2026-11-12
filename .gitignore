@@ -2,3 +2,4 @@ build/
 .gradle/
 local.properties
 *.apk
+!release/Cineo.apk
