@@ -15,6 +15,9 @@ import java.net.URL
 
 /** Met à jour l'app depuis la dernière release GitHub (tag vX.Y.N, asset .apk). */
 object Updater {
+    private val running = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var lastCheck = 0L
+    private var askedPerm = false
     private const val REPO = "jessux/cineo"
     private const val UA = "Cineo-Updater"
 
@@ -52,12 +55,18 @@ object Updater {
 
     /** Si une release plus récente existe : télécharge l'APK et ouvre l'écran d'installation système. Erreurs réseau ignorées. */
     suspend fun checkAndInstall(c: Context) = withContext(Dispatchers.IO) {
-        runCatching {
+        // Vérifie au plus une fois par minute (onResume), jamais deux fois en parallèle
+        if (System.currentTimeMillis() - lastCheck < 60_000 || !running.compareAndSet(false, true)) return@withContext
+        lastCheck = System.currentTimeMillis()
+        try { runCatching {
             val (code, url) = latest() ?: return@runCatching
             if (code <= installedCode(c)) return@runCatching
             if (!canInstall(c)) {
+                if (askedPerm) return@runCatching
+                askedPerm = true
                 c.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${c.packageName}"))
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                lastCheck = 0 // revérifie dès le retour des réglages
                 return@runCatching
             }
             val tmp = File(c.cacheDir, "update.apk.part")
@@ -68,6 +77,6 @@ object Updater {
             c.startActivity(Intent(Intent.ACTION_VIEW)
                 .setDataAndType(uri, "application/vnd.android.package-archive")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
-        }
+        } } finally { running.set(false) }
     }
 }

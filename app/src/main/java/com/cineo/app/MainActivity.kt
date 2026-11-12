@@ -68,7 +68,7 @@ val Gold = Color(0xFFFFB547)
 
 class MainActivity : AppCompatActivity() {
     private val vm: AppVm by viewModels()
-    override fun onResume() { super.onResume(); vm.resumeTick++ }
+    override fun onResume() { super.onResume(); vm.resumeTick++; vm.checkUpdate() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -88,7 +88,6 @@ class MainActivity : AppCompatActivity() {
 
 @Composable
 fun App(vm: AppVm) {
-    LaunchedEffect(Unit) { vm.checkUpdate() }
     LaunchedEffect(vm.creds) {
         while (vm.creds != null) { vm.refreshConns(); delay(15_000) }
     }
