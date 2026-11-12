@@ -112,7 +112,8 @@ fun App(vm: AppVm) {
                 }
             },
         ) { pad ->
-            Box(Modifier.padding(pad).fillMaxSize()) {
+            // Haut géré par chaque écran (statusBarsPadding) : seul le bas vient du Scaffold
+            Box(Modifier.padding(bottom = pad.calculateBottomPadding()).fillMaxSize()) {
                 when {
                     vm.busy && vm.movies.isEmpty() && vm.live.isEmpty() ->
                         Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
