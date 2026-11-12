@@ -67,7 +67,9 @@ class AppVm(app: Application) : AndroidViewModel(app) {
             .remove("favs_${p.id}").remove("history_${p.id}").apply()
     }
 
-    private val pid get() = profile?.id ?: "p0"
+    val pid get() = profile?.id ?: "p0"
+    var resumeTick by mutableStateOf(0) // relu au retour du lecteur
+    fun resumeOf(c: android.content.Context, i: Item) = Resume.get(c, "$pid|${i.key}")
 
     val favs = mutableStateListOf<String>()
 

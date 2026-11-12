@@ -40,7 +40,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.activity.viewModels
 import coil.compose.AsyncImage
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.pager.HorizontalPager
@@ -60,6 +60,9 @@ val Accent = Color(0xFF8B6CFF)
 val Gold = Color(0xFFFFB547)
 
 class MainActivity : AppCompatActivity() {
+    private val vm: AppVm by viewModels()
+    override fun onResume() { super.onResume(); vm.resumeTick++ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -67,7 +70,6 @@ class MainActivity : AppCompatActivity() {
         setContent {
             var splash by rememberSaveable { mutableStateOf(true) }
             MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Bg, secondary = Gold)) {
-                val vm: AppVm = viewModel()
                 App(vm)
                 if (splash) SplashScreen { splash = false }
             }
@@ -165,15 +167,20 @@ fun Logo(size: Int) = Text(
 fun AppVm.play(ctx: android.content.Context, item: Item, ep: Episode? = null) {
     val x = api ?: return
     recordPlay(item)
-    if (ep != null) PlayerActivity.start(ctx, x.url(ep), "${item.name} – ${ep.title}", ep.image ?: item.image)
-    else PlayerActivity.start(ctx, x.url(item), item.name, item.image, item.kind == Kind.LIVE)
+    if (ep != null) PlayerActivity.start(ctx, x.url(ep), "${item.name} – ${ep.title}", ep.image ?: item.image,
+        keys = arrayOf("$pid|EP:${ep.id}", "$pid|${item.key}"), ep = ep.id)
+    else PlayerActivity.start(ctx, x.url(item), item.name, item.image, item.kind == Kind.LIVE,
+        keys = if (item.kind == Kind.LIVE) emptyArray() else arrayOf("$pid|${item.key}"))
 }
 
 @Composable
 fun HomeScreen(vm: AppVm) {
     val reco = remember(vm.movies, vm.series, vm.history.size, vm.favs.size) { vm.recommendations() }
     val because = remember(vm.movies, vm.series, vm.history.firstOrNull()) { vm.becauseYouWatched() }
+    val ctx = LocalContext.current
+    val tick = vm.resumeTick
     val watched = vm.watched().take(20)
+    val cont = remember(watched, tick) { watched.mapNotNull { i -> vm.resumeOf(ctx, i)?.let { i to it.progress } } }
     val recentMovies = remember(vm.movies) { vm.movies.sortedByDescending { it.added }.take(30) }
     val recentSeries = remember(vm.series) { vm.series.sortedByDescending { it.added }.take(30) }
     val favs = vm.favItems()
@@ -188,6 +195,10 @@ fun HomeScreen(vm: AppVm) {
             }
         }
         if (reco.isNotEmpty()) item { HeroCarousel(vm, reco.take(8), if (vm.history.isEmpty()) "À la une" else "Recommandé pour vous") }
+        if (cont.isNotEmpty()) item {
+            val prog = cont.toMap()
+            PosterRow("Continuer à regarder", cont.map { it.first }, { prog[it] }) { if (it.kind == Kind.MOVIE) vm.play(ctx, it) else vm.detail = it }
+        }
         if (watched.isNotEmpty()) item { PosterRow("Récemment regardés", watched) { vm.detail = it } }
         if (favs.isNotEmpty()) item { PosterRow("Ma liste", favs) { vm.detail = it } }
         if (reco.size > 8) item { PosterRow("Sélectionnés pour vous", reco.drop(8)) { vm.detail = it } }
@@ -248,19 +259,19 @@ fun HeroCarousel(vm: AppVm, list: List<Item>, label: String) {
 }
 
 @Composable
-fun PosterRow(title: String, items: List<Item>, onClick: (Item) -> Unit) {
+fun PosterRow(title: String, items: List<Item>, progress: (Item) -> Float? = { null }, onClick: (Item) -> Unit) {
     if (items.isEmpty()) return
     Column(Modifier.padding(top = 14.dp)) {
         Text(title, Modifier.padding(horizontal = 16.dp), fontSize = 17.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(8.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(items, key = { it.key }) { Poster(it, Modifier.width(112.dp)) { onClick(it) } }
+            items(items, key = { it.key }) { Poster(it, Modifier.width(112.dp), progress(it)) { onClick(it) } }
         }
     }
 }
 
 @Composable
-fun Poster(item: Item, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun Poster(item: Item, modifier: Modifier = Modifier, progress: Float? = null, onClick: () -> Unit) {
     var state by remember(item.key) { mutableIntStateOf(if (item.image == null) 2 else 0) } // 0 chargement, 1 ok, 2 erreur
     Box(modifier.aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(Card).clickable(onClick = onClick)) {
         when (state) {
@@ -271,6 +282,11 @@ fun Poster(item: Item, modifier: Modifier = Modifier, onClick: () -> Unit) {
             thumb(item.image, 342), item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
             onSuccess = { state = 1 }, onError = { state = 2 },
         )
+        progress?.let {
+            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color(0x99000000))) {
+                Box(Modifier.fillMaxHeight().fillMaxWidth(it.coerceIn(0f, 1f)).background(Accent))
+            }
+        }
     }
 }
 
@@ -393,12 +409,20 @@ fun DetailScreen(vm: AppVm, item: Item) {
                 val meta = listOfNotNull(info?.meta?.ifBlank { null }, item.rating.ifBlank { null }?.let { "★ $it" }).joinToString(" · ")
                 if (meta.isNotBlank()) Text(meta, color = Color.Gray, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
                 Spacer(Modifier.height(14.dp))
-                if (item.kind == Kind.MOVIE) {
-                    Button(onClick = { vm.play(ctx, item) },
+                val res = remember(item.key, vm.resumeTick) { vm.resumeOf(ctx, item) }
+                val resEp = res?.let { r -> info?.episodes?.values?.flatten()?.firstOrNull { it.id == r.ep } }
+                if (item.kind == Kind.MOVIE || resEp != null) {
+                    Button(onClick = { vm.play(ctx, item, resEp) },
                         Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(6.dp),
                         colors = ButtonDefaults.buttonColors(Color.White, Color.Black)) {
-                        Icon(Icons.Filled.PlayArrow, null); Text("Lecture", fontWeight = FontWeight.Bold)
+                        Icon(Icons.Filled.PlayArrow, null)
+                        Text(when {
+                            resEp != null -> "Reprendre S${resEp.season} E${resEp.num}"
+                            res != null -> "Reprendre"
+                            else -> "Lecture"
+                        }, fontWeight = FontWeight.Bold)
                     }
+                    res?.let { LinearProgressIndicator({ it.progress }, Modifier.fillMaxWidth().padding(top = 6.dp)) }
                     Spacer(Modifier.height(8.dp))
                 }
                 FilledTonalButton(onClick = { vm.toggleFav(item) }, Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(6.dp)) {

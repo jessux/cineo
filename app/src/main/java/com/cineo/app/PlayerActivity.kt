@@ -42,6 +42,7 @@ class PlayerActivity : ComponentActivity() {
         player = p
         val url = intent.getStringExtra("url").orEmpty()
         p.setMediaItem(MediaItem.fromUri(url))
+        keys.firstOrNull()?.let { k -> Resume.get(this, k)?.let { p.seekTo(it.pos) } }
         p.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 // Format non lisible par le téléphone : on propose un lecteur externe (VLC, MX Player…)
@@ -62,13 +63,19 @@ class PlayerActivity : ComponentActivity() {
         })
     }
 
-    override fun onStop() { super.onStop(); player?.pause() }
+    private val keys get() = intent.getStringArrayExtra("keys") ?: emptyArray()
+
+    override fun onStop() {
+        super.onStop()
+        player?.let { if (keys.isNotEmpty() && !it.isCurrentMediaItemLive) Resume.put(this, keys, it.currentPosition, it.duration, intent.getStringExtra("ep").orEmpty()); it.pause() }
+    }
     override fun onDestroy() { player?.release(); player = null; super.onDestroy() }
 
     companion object {
-        fun start(ctx: Context, url: String, title: String = "", image: String? = null, live: Boolean = false) {
+        fun start(ctx: Context, url: String, title: String = "", image: String? = null, live: Boolean = false,
+                  keys: Array<String> = emptyArray(), ep: String = "") {
             if (Cast.play(ctx, url, title, image, live)) return
-            ctx.startActivity(Intent(ctx, PlayerActivity::class.java).putExtra("url", url))
+            ctx.startActivity(Intent(ctx, PlayerActivity::class.java).putExtra("url", url).putExtra("keys", keys).putExtra("ep", ep))
         }
     }
 }
