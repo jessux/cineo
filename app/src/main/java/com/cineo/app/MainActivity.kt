@@ -72,6 +72,7 @@ class MainActivity : AppCompatActivity() {
 @Composable
 fun App(vm: AppVm) {
     if (vm.creds == null) { LoginScreen(vm); return }
+    if (vm.profile == null) { ProfilesScreen(vm); return }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val tabs = listOf<Pair<String, ImageVector>>(
         "Accueil" to Icons.Filled.Home, "Films" to Icons.Filled.Movie, "Séries" to Icons.Filled.Tv,
@@ -174,6 +175,7 @@ fun HomeScreen(vm: AppVm) {
         item {
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(16.dp, 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Logo(24); Spacer(Modifier.weight(1f))
+                vm.profile?.let { Avatar(it, 30.dp, Modifier.padding(end = 6.dp).clickable { vm.selectProfile(null) }) }
                 CastButton()
                 IconButton(onClick = { vm.loadAll() }) { Icon(Icons.Filled.Refresh, "Actualiser") }
                 IconButton(onClick = { vm.logout() }) { Icon(Icons.AutoMirrored.Filled.Logout, "Déconnexion") }

@@ -33,22 +33,56 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     var seriesByCat by mutableStateOf(emptyMap<String, List<Item>>()); private set
     var liveByCat by mutableStateOf(emptyMap<String, List<Item>>()); private set
 
-    val favs = mutableStateListOf<String>().apply { addAll(prefs.getStringSet("favs", emptySet())!!) }
+    // ---- Profils ("Qui regarde ?") : Ma liste + historique propres à chacun ----
+    val profiles = mutableStateListOf<Profile>().apply {
+        addAll(prefs.getString("profiles", "")!!.split("\n").mapNotNull(Profile::parse))
+        if (isEmpty()) { // 1er lancement : profil par défaut qui reprend les anciennes données
+            add(Profile("p0", "Moi", 0))
+            prefs.edit().putString("profiles", "p0|Moi|0")
+                .putStringSet("favs_p0", prefs.getStringSet("favs", emptySet()))
+                .putString("history_p0", prefs.getString("history", "")).apply()
+        }
+    }
+    var profile by mutableStateOf<Profile?>(null); private set
+
+    fun selectProfile(p: Profile?) {
+        profile = p; detail = null
+        favs.clear(); history.clear()
+        if (p == null) return
+        favs.addAll(prefs.getStringSet("favs_${p.id}", emptySet())!!)
+        history.addAll(prefs.getString("history_${p.id}", "")!!.split("\n").filter { it.isNotBlank() })
+    }
+
+    fun saveProfile(p: Profile) {
+        val i = profiles.indexOfFirst { it.id == p.id }
+        if (i >= 0) profiles[i] = p else profiles.add(p)
+        if (profile?.id == p.id) profile = p
+        prefs.edit().putString("profiles", profiles.joinToString("\n") { it.encode() }).apply()
+    }
+
+    fun deleteProfile(p: Profile) {
+        if (profiles.size <= 1) return
+        profiles.removeAll { it.id == p.id }
+        prefs.edit().putString("profiles", profiles.joinToString("\n") { it.encode() })
+            .remove("favs_${p.id}").remove("history_${p.id}").apply()
+    }
+
+    private val pid get() = profile?.id ?: "p0"
+
+    val favs = mutableStateListOf<String>()
 
     fun toggleFav(i: Item) {
         if (!favs.remove(i.key)) favs.add(0, i.key)
-        prefs.edit().putStringSet("favs", favs.toSet()).apply()
+        prefs.edit().putStringSet("favs_$pid", favs.toSet()).apply()
     }
     // ---- Profil de goût : historique de lecture + Ma liste ----
-    val history = mutableStateListOf<String>().apply {
-        addAll(prefs.getString("history", "")!!.split("\n").filter { it.isNotBlank() })
-    }
+    val history = mutableStateListOf<String>()
 
     fun recordPlay(i: Item) {
         if (i.kind == Kind.LIVE) return
         history.remove(i.key); history.add(0, i.key)
         while (history.size > 100) history.removeAt(history.lastIndex)
-        prefs.edit().putString("history", history.joinToString("\n")).apply()
+        prefs.edit().putString("history_$pid", history.joinToString("\n")).apply()
     }
 
     private fun index() = (movies + series).associateBy { it.key }
@@ -105,6 +139,7 @@ class AppVm(app: Application) : AndroidViewModel(app) {
 
     fun logout() {
         prefs.edit().remove("server").remove("user").remove("pass").apply()
+        selectProfile(null)
         creds = null; movies = emptyList(); series = emptyList(); live = emptyList(); detail = null
     }
 
@@ -129,5 +164,12 @@ class AppVm(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) { error = "Chargement impossible : ${e.message}" }
             busy = false
         }
+    }
+}
+
+data class Profile(val id: String, val name: String, val color: Int) {
+    fun encode() = "$id|${name.replace("|", " ").replace("\n", " ")}|$color"
+    companion object {
+        fun parse(l: String) = l.split("|").takeIf { it.size == 3 }?.let { Profile(it[0], it[1], it[2].toIntOrNull() ?: 0) }
     }
 }
