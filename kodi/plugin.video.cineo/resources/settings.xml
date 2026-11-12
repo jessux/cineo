@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<settings>
+  <category label="Connexion">
+    <setting id="m3u" type="bool" label="Playlist M3U (URL dans Serveur)" default="false"/>
+    <setting id="server" type="text" label="Serveur (http://hôte:port ou URL M3U)" default=""/>
+    <setting id="user" type="text" label="Utilisateur" default="" visible="eq(-2,false)"/>
+    <setting id="pass" type="text" label="Mot de passe" option="hidden" default="" visible="eq(-3,false)"/>
+  </category>
+</settings>
