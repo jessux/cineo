@@ -167,7 +167,12 @@ fun LoginScreen(vm: AppVm) {
                     .clickable(enabled = !vm.busy) { vm.login(a.server, a.user, a.pass, a.m3u) }.padding(14.dp, 6.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Icon(if (a.m3u) Icons.Filled.List else Icons.Filled.LiveTv, null, tint = Gold)
-                    Text(a.label, Modifier.weight(1f).padding(horizontal = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                        Text(a.server.substringAfter("://").substringBefore("/"), color = Color.White, fontWeight = FontWeight.SemiBold,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(if (a.m3u) "Playlist M3U" else "Xtream · ${a.user}", color = Color.Gray, fontSize = 12.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                     IconButton(onClick = { vm.forgetAccount(a) }) { Icon(Icons.Filled.Close, "Oublier", tint = Color.Gray) }
                 }
             }
