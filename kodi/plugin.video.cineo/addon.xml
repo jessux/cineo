@@ -10,6 +10,9 @@
     <summary lang="fr_FR">Films, séries et TV en direct (Xtream / M3U)</summary>
     <description lang="fr_FR">Client Xtream Codes et M3U : films, séries, chaînes en direct, recherche et replay.</description>
     <platform>all</platform>
+    <assets>
+      <icon>icon.png</icon>
+    </assets>
     <license>Proprietary</license>
   </extension>
 </addon>
