@@ -28,6 +28,15 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     }
     private fun saveAccounts() = prefs.edit().putString("accounts", accounts.joinToString("\n") { it.encode() }).apply()
     fun forgetAccount(c: Creds) { accounts.remove(c); saveAccounts() }
+    /** Noms personnalisés des comptes, stockés à part (clé = compte encodé). */
+    val accountNames = mutableStateMapOf<String, String>().apply {
+        accounts.forEach { a -> prefs.getString("name:" + a.encode(), null)?.let { put(a.encode(), it) } }
+    }
+    fun renameAccount(c: Creds, name: String) {
+        val k = c.encode(); val n = name.trim()
+        if (n.isEmpty()) accountNames.remove(k) else accountNames[k] = n
+        prefs.edit().putString("name:$k", n.ifEmpty { null }).apply()
+    }
 
     // ---- Contrôle parental ----
     var pin by mutableStateOf(prefs.getString("pin", null)); private set
