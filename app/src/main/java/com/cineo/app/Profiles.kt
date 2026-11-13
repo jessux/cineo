@@ -55,7 +55,7 @@ fun ProfilesScreen(vm: AppVm) {
         Spacer(Modifier.height(24.dp))
         Logo(26)
         Spacer(Modifier.height(32.dp))
-        Text(if (edit) "Gérer les profils" else "Qui regarde ?", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Text(if (edit) "Gérer les profils" else "Qui regarde ?", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(28.dp))
         LazyVerticalGrid(
             GridCells.Adaptive(120.dp), Modifier.widthIn(max = 560.dp).weight(1f, fill = false),
