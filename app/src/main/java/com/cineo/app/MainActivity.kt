@@ -294,7 +294,8 @@ fun HomeScreen(vm: AppVm) {
             val prog = cont.toMap()
             PosterRow("Continuer à regarder", cont.map { it.first }, { prog[it] }) { if (it.kind == Kind.MOVIE) vm.play(ctx, it) else vm.detail = it }
         }
-        if (watched.isNotEmpty()) item { PosterRow("Récemment regardés", watched) { vm.detail = it } }
+        val past = watched.filter { w -> cont.none { it.first == w } }
+        if (past.isNotEmpty()) item { PosterRow("Récemment regardés", past) { vm.detail = it } }
         if (favs.isNotEmpty()) item { PosterRow("Ma liste", favs) { vm.detail = it } }
         if (reco.size > 8) item { PosterRow("Sélectionnés pour vous", reco.drop(8)) { vm.detail = it } }
         because?.let { (src, list) -> item { PosterRow("Parce que vous avez regardé ${src.name}", list) { vm.detail = it } } }

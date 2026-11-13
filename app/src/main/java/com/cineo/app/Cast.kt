@@ -3,6 +3,8 @@ package com.cineo.app
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.view.ContextThemeWrapper
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
@@ -13,6 +15,8 @@ import androidx.mediarouter.app.MediaRouteButton
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
+import com.google.android.gms.cast.MediaStatus
+import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.cast.framework.CastButtonFactory
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastOptions
@@ -53,8 +57,40 @@ object Cast {
         val info = MediaInfo.Builder(u).setContentType(type).setMetadata(meta)
             .setStreamType(if (live) MediaInfo.STREAM_TYPE_LIVE else MediaInfo.STREAM_TYPE_BUFFERED).build()
         client.load(MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true).build())
+        watch(client, info, live)
         c.startActivity(Intent(c, CastControllerActivity::class.java))
         return true
+    }
+
+    private var cb: RemoteMediaClient.Callback? = null
+    private var progress: RemoteMediaClient.ProgressListener? = null
+
+    /** Relance automatiquement le flux (à la dernière position) si le serveur coupe la lecture. */
+    private fun watch(client: RemoteMediaClient, info: MediaInfo, live: Boolean) {
+        cb?.let { client.unregisterCallback(it) }
+        progress?.let { client.removeProgressListener(it) }
+        var pos = 0L; var dur = 0L; var retries = 0
+        val h = Handler(Looper.getMainLooper())
+        progress = RemoteMediaClient.ProgressListener { p, d -> if (p > 0) { pos = p; dur = d; if (p > 30_000) retries = 0 } }
+            .also { client.addProgressListener(it, 1000) }
+        cb = object : RemoteMediaClient.Callback() {
+            override fun onStatusUpdated() {
+                val st = client.mediaStatus ?: return
+                if (st.mediaInfo?.contentId?.let { it != info.contentId } == true) return
+                if (st.playerState != MediaStatus.PLAYER_STATE_IDLE) return
+                val cut = when (st.idleReason) {
+                    MediaStatus.IDLE_REASON_ERROR -> true
+                    MediaStatus.IDLE_REASON_FINISHED -> live || (dur > 0 && pos < dur - 60_000)
+                    else -> false
+                }
+                if (!cut || retries >= 5) return
+                retries++
+                h.postDelayed({
+                    client.load(MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true)
+                        .apply { if (!live) setCurrentTime(pos) }.build())
+                }, 2000L * retries)
+            }
+        }.also { client.registerCallback(it) }
     }
 }
 
