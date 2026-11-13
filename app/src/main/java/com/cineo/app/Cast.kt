@@ -5,6 +5,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import java.net.HttpURLConnection
+import java.net.URL
 import android.view.ContextThemeWrapper
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
@@ -15,8 +17,6 @@ import androidx.mediarouter.app.MediaRouteButton
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
-import com.google.android.gms.cast.MediaStatus
-import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.cast.framework.CastButtonFactory
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastOptions
@@ -54,44 +54,35 @@ object Cast {
             "m3u8" -> "application/x-mpegURL"; "mkv" -> "video/x-matroska"; "webm" -> "video/webm"
             "ts" -> "video/mp2t"; "avi" -> "video/x-msvideo"; else -> "video/mp4"
         }
-        val info = MediaInfo.Builder(u).setContentType(type).setMetadata(meta)
-            .setStreamType(if (live) MediaInfo.STREAM_TYPE_LIVE else MediaInfo.STREAM_TYPE_BUFFERED).build()
-        client.load(MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true).build())
-        watch(client, info, live)
+        // Les serveurs Xtream redirigent vers une URL à jeton : sans ça, chaque requête du Chromecast
+        // (buffer, seek) repasse par l'URL d'origine, ouvre une nouvelle connexion et dépasse la limite → coupure.
+        Thread {
+            val final = if (live) u else resolve(u)
+            val info = MediaInfo.Builder(final).setContentType(type).setMetadata(meta)
+                .setStreamType(if (live) MediaInfo.STREAM_TYPE_LIVE else MediaInfo.STREAM_TYPE_BUFFERED).build()
+            Handler(Looper.getMainLooper()).post {
+                client.load(MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true).build())
+            }
+        }.start()
         c.startActivity(Intent(c, CastControllerActivity::class.java))
         return true
     }
 
-    private var cb: RemoteMediaClient.Callback? = null
-    private var progress: RemoteMediaClient.ProgressListener? = null
-
-    /** Relance automatiquement le flux (à la dernière position) si le serveur coupe la lecture. */
-    private fun watch(client: RemoteMediaClient, info: MediaInfo, live: Boolean) {
-        cb?.let { client.unregisterCallback(it) }
-        progress?.let { client.removeProgressListener(it) }
-        var pos = 0L; var dur = 0L; var retries = 0
-        val h = Handler(Looper.getMainLooper())
-        progress = RemoteMediaClient.ProgressListener { p, d -> if (p > 0) { pos = p; dur = d; if (p > 30_000) retries = 0 } }
-            .also { client.addProgressListener(it, 1000) }
-        cb = object : RemoteMediaClient.Callback() {
-            override fun onStatusUpdated() {
-                val st = client.mediaStatus ?: return
-                if (st.mediaInfo?.contentId?.let { it != info.contentId } == true) return
-                if (st.playerState != MediaStatus.PLAYER_STATE_IDLE) return
-                val cut = when (st.idleReason) {
-                    MediaStatus.IDLE_REASON_ERROR -> true
-                    MediaStatus.IDLE_REASON_FINISHED -> live || (dur > 0 && pos < dur - 60_000)
-                    else -> false
-                }
-                if (!cut || retries >= 5) return
-                retries++
-                h.postDelayed({
-                    client.load(MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true)
-                        .apply { if (!live) setCurrentTime(pos) }.build())
-                }, 2000L * retries)
+    /** Suit les redirections sans télécharger le flux ; renvoie l'URL d'origine en cas d'échec. */
+    private fun resolve(url: String): String = runCatching {
+        var cur = url
+        repeat(5) {
+            val conn = (URL(cur).openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = false; connectTimeout = 5000; readTimeout = 5000
+                setRequestProperty("Range", "bytes=0-0")
             }
-        }.also { client.registerCallback(it) }
-    }
+            try {
+                if (conn.responseCode !in 300..399) return@runCatching cur
+                cur = URL(URL(cur), conn.getHeaderField("Location") ?: return@runCatching cur).toString()
+            } finally { conn.disconnect() }
+        }
+        cur
+    }.getOrDefault(url)
 }
 
 @Composable
