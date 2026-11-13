@@ -28,11 +28,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.paint
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -188,7 +190,10 @@ fun LoginScreen(vm: AppVm) {
         )
     }
     Column(
-        Modifier.fillMaxSize().background(Bg).systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
+        Modifier.fillMaxSize()
+            .paint(painterResource(R.drawable.login_fanart), contentScale = ContentScale.Crop)
+            .background(Brush.verticalGradient(listOf(Bg.copy(alpha = 0.45f), Bg.copy(alpha = 0.88f), Bg.copy(alpha = 0.8f))))
+            .systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Logo(40)
@@ -212,7 +217,7 @@ fun LoginScreen(vm: AppVm) {
             }
             Spacer(Modifier.height(24.dp))
         }
-        TabRow(if (m3u) 1 else 0, containerColor = Bg) {
+        TabRow(if (m3u) 1 else 0, containerColor = Color.Transparent) {
             Tab(!m3u, { m3u = false }, text = { Text("Xtream Codes") })
             Tab(m3u, { m3u = true }, text = { Text("Lien M3U") })
         }
