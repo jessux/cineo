@@ -5,8 +5,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import java.net.HttpURLConnection
-import java.net.URL
 import android.view.ContextThemeWrapper
 import android.widget.Toast
 import androidx.compose.foundation.layout.size
@@ -21,6 +19,8 @@ import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
 import com.google.android.gms.cast.framework.CastButtonFactory
 import com.google.android.gms.cast.framework.CastContext
+import com.google.android.gms.cast.framework.CastSession
+import com.google.android.gms.cast.framework.SessionManagerListener
 import com.google.android.gms.cast.framework.CastOptions
 import com.google.android.gms.cast.framework.OptionsProvider
 import com.google.android.gms.cast.framework.SessionProvider
@@ -58,16 +58,16 @@ object Cast {
             "m3u8" -> "application/x-mpegURL"; "mkv" -> "video/x-matroska"; "webm" -> "video/webm"
             "ts" -> "video/mp2t"; "avi" -> "video/x-msvideo"; else -> "video/mp4"
         }
-        // Les serveurs Xtream redirigent vers une URL à jeton : sans ça, chaque requête du Chromecast
-        // (buffer, seek, rechargement de la playlist en direct) repasse par l'URL d'origine, ouvre une nouvelle connexion et dépasse la limite → coupure.
+        // Le Chromecast lit via le relais du téléphone, qui se reconnecte quand le serveur IPTV coupe (erreur 103)
         Thread {
-            val final = resolve(u)
+            val final = CastRelay.url(c, u) ?: u
             val info = MediaInfo.Builder(final).setContentType(type).setMetadata(meta)
                 .setStreamType(if (live) MediaInfo.STREAM_TYPE_LIVE else MediaInfo.STREAM_TYPE_BUFFERED).build()
             Handler(Looper.getMainLooper()).post {
                 client.load(MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true).build())
                     .setResultCallback { r -> if (!r.status.isSuccess) toast(c, "Chromecast : échec du chargement (${r.status.statusCode})") }
                 if (watched !== client) { watched = client; client.registerCallback(errCb) }
+                if (!ended) { ended = true; context(c)?.sessionManager?.addSessionManagerListener(endCb, CastSession::class.java) }
             }
         }.start()
         c.startActivity(Intent(c, CastControllerActivity::class.java))
@@ -82,21 +82,19 @@ object Cast {
         override fun onMediaError(e: MediaError) { toast(app, "Chromecast : erreur ${e.detailedErrorCode ?: ""} ${e.reason ?: ""}") }
     }
 
-    /** Suit les redirections sans télécharger le flux ; renvoie l'URL d'origine en cas d'échec. */
-    private fun resolve(url: String): String = runCatching {
-        var cur = url
-        repeat(5) {
-            val conn = (URL(cur).openConnection() as HttpURLConnection).apply {
-                instanceFollowRedirects = false; connectTimeout = 5000; readTimeout = 5000
-                setRequestProperty("Range", "bytes=0-0")
-            }
-            try {
-                if (conn.responseCode !in 300..399) return@runCatching cur
-                cur = URL(URL(cur), conn.getHeaderField("Location") ?: return@runCatching cur).toString()
-            } finally { conn.disconnect() }
-        }
-        cur
-    }.getOrDefault(url)
+    private var ended = false
+    /** Fin de la session Chromecast : on arrête le relais. */
+    private val endCb = object : SessionManagerListener<CastSession> {
+        override fun onSessionEnded(s: CastSession, e: Int) = CastRelayService.stop(app)
+        override fun onSessionStarting(s: CastSession) {}
+        override fun onSessionStarted(s: CastSession, id: String) {}
+        override fun onSessionStartFailed(s: CastSession, e: Int) {}
+        override fun onSessionEnding(s: CastSession) {}
+        override fun onSessionResuming(s: CastSession, id: String) {}
+        override fun onSessionResumed(s: CastSession, wasSuspended: Boolean) {}
+        override fun onSessionResumeFailed(s: CastSession, e: Int) {}
+        override fun onSessionSuspended(s: CastSession, reason: Int) {}
+    }
 }
 
 @Composable
