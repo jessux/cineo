@@ -62,6 +62,13 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.job
+import kotlinx.coroutines.withContext
 
 val Bg = Color(0xFF0E0D13)
 val Card = Color(0xFF1C1A24)
@@ -78,8 +85,10 @@ class MainActivity : AppCompatActivity() {
         Cast.context(this) // démarre la découverte des Chromecast
         setContent {
             var splash by rememberSaveable { mutableStateOf(true) }
+            val haptic = LocalHapticFeedback.current
+            val openMenu = remember { { i: Item -> haptic.performHapticFeedback(HapticFeedbackType.LongPress); vm.menu = i } }
             MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Bg, secondary = Gold)) {
-                CompositionLocalProvider(LocalContentColor provides Color.White) {
+                CompositionLocalProvider(LocalContentColor provides Color.White, LocalItemMenu provides openMenu) {
                     App(vm)
                     if (splash) SplashScreen { splash = false }
                 }
@@ -101,9 +110,20 @@ fun App(vm: AppVm) {
         "Direct" to Icons.Filled.LiveTv, "Recherche" to Icons.Filled.Search,
     )
     BackHandler(vm.detail == null && tab != 0) { tab = 0 }
+    val snack = remember { SnackbarHostState() }
+    LaunchedEffect(vm.notice) {
+        val n = vm.notice ?: return@LaunchedEffect
+        val r = snack.showSnackbar(n.text, if (n.undo != null) "Annuler" else null,
+            duration = if (n.undo != null) SnackbarDuration.Long else SnackbarDuration.Short)
+        if (r == SnackbarResult.ActionPerformed) n.undo?.invoke()
+        if (vm.notice === n) vm.notice = null
+    }
     Box(Modifier.fillMaxSize().background(Bg)) {
         Scaffold(
             containerColor = Bg,
+            snackbarHost = {
+                SnackbarHost(snack) { Snackbar(it, containerColor = Color(0xFF2A2735), contentColor = Color.White, actionColor = Gold) }
+            },
             bottomBar = {
                 NavigationBar(containerColor = Color(0xFF15131C)) {
                     tabs.forEachIndexed { i, (label, icon) ->
@@ -152,6 +172,7 @@ fun App(vm: AppVm) {
                 dismissButton = { TextButton(onClick = { vm.pendingPlay = null }) { Text("Annuler") } },
             )
         }
+        vm.menu?.let { ItemMenu(vm, it) { vm.menu = null } }
     }
 }
 
@@ -268,14 +289,17 @@ fun AppVm.playReplay(ctx: android.content.Context, item: Item, p: Prog) = guard 
 
 @Composable
 fun HomeScreen(vm: AppVm) {
-    val reco = remember(vm.movies, vm.series, vm.history.size, vm.favs.size) { vm.recommendations() }
-    val because = remember(vm.movies, vm.series, vm.history.firstOrNull()) { vm.becauseYouWatched() }
+    val hidden = vm.hidden
+    // « Ne plus me le proposer » : retiré des suggestions et des catégories de l'accueil (pas de Ma liste ni de l'historique)
+    fun List<Item>.shown() = if (hidden.isEmpty()) this else filter { it.key !in hidden }
+    val reco = remember(vm.movies, vm.series, vm.history.size, vm.favs.size, hidden) { vm.recommendations() }
+    val because = remember(vm.movies, vm.series, vm.history.firstOrNull(), hidden) { vm.becauseYouWatched() }
     val ctx = LocalContext.current
     val tick = vm.resumeTick
     val watched = vm.watched().take(20)
     val cont = remember(watched, tick) { watched.mapNotNull { i -> vm.resumeOf(ctx, i)?.let { i to it.progress } } }
-    val recentMovies = remember(vm.movies) { vm.movies.sortedByDescending { it.added }.take(30) }
-    val recentSeries = remember(vm.series) { vm.series.sortedByDescending { it.added }.take(30) }
+    val recentMovies = remember(vm.movies, hidden) { vm.movies.shown().sortedByDescending { it.added }.take(30) }
+    val recentSeries = remember(vm.series, hidden) { vm.series.shown().sortedByDescending { it.added }.take(30) }
     val favs = vm.favItems()
     var settings by remember { mutableStateOf(false) }
     if (settings) SettingsDialog(vm) { settings = false }
@@ -290,6 +314,7 @@ fun HomeScreen(vm: AppVm) {
             }
         }
         if (reco.isNotEmpty()) item { HeroCarousel(vm, reco.take(8), if (vm.history.isEmpty()) "À la une" else "Recommandé pour vous") }
+        if (vm.movies.isNotEmpty() || vm.series.isNotEmpty()) item { MoodSection(vm) { vm.detail = it } }
         if (cont.isNotEmpty()) item {
             val prog = cont.toMap()
             PosterRow("Continuer à regarder", cont.map { it.first }, { prog[it] }) { if (it.kind == Kind.MOVIE) vm.play(ctx, it) else vm.detail = it }
@@ -301,8 +326,8 @@ fun HomeScreen(vm: AppVm) {
         because?.let { (src, list) -> item { PosterRow("Parce que vous avez regardé ${src.name}", list) { vm.detail = it } } }
         item { PosterRow("Films ajoutés récemment", recentMovies) { vm.detail = it } }
         item { PosterRow("Séries récentes", recentSeries) { vm.detail = it } }
-        items(vm.movieCats.take(10), key = { "m" + it.id }) { c -> PosterRow(c.name, vm.moviesByCat[c.id].orEmpty()) { vm.detail = it } }
-        items(vm.seriesCats.take(10), key = { "s" + it.id }) { c -> PosterRow(c.name, vm.seriesByCat[c.id].orEmpty()) { vm.detail = it } }
+        items(vm.movieCats.take(10), key = { "m" + it.id }) { c -> PosterRow(c.name, vm.moviesByCat[c.id].orEmpty().shown()) { vm.detail = it } }
+        items(vm.seriesCats.take(10), key = { "s" + it.id }) { c -> PosterRow(c.name, vm.seriesByCat[c.id].orEmpty().shown()) { vm.detail = it } }
         item { Spacer(Modifier.height(16.dp)) }
     }
 }
@@ -322,7 +347,7 @@ fun HeroCarousel(vm: AppVm, list: List<Item>, label: String) {
     Box(Modifier.fillMaxWidth().height(480.dp)) {
         HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
             val h = list[page]
-            Box(Modifier.fillMaxSize().clickable { vm.detail = h }) {
+            Box(Modifier.fillMaxSize().itemClick(h) { vm.detail = h }) {
                 AsyncImage(thumb(h.image, 780), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Bg.copy(alpha = 0.85f), Bg))))
                 Column(Modifier.align(Alignment.BottomCenter).padding(16.dp, 0.dp, 16.dp, 34.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -372,7 +397,7 @@ fun PosterRow(title: String, items: List<Item>, progress: (Item) -> Float? = { n
 @Composable
 fun Poster(item: Item, modifier: Modifier = Modifier, progress: Float? = null, onClick: () -> Unit) {
     var state by remember(item.key) { mutableIntStateOf(if (item.image == null) 2 else 0) } // 0 chargement, 1 ok, 2 erreur
-    Box(modifier.tvFocus().aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(Card).clickable(onClick = onClick)) {
+    Box(modifier.tvFocus().aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(Card).itemClick(item, onClick)) {
         when (state) {
             0 -> LoadingLogo(Modifier.fillMaxSize())
             2 -> Text(item.name, Modifier.align(Alignment.Center).padding(8.dp), fontSize = 12.sp, textAlign = TextAlign.Center, color = Color.LightGray)
@@ -530,6 +555,12 @@ fun ChannelSheet(vm: AppVm, ch: Item, onDismiss: () -> Unit) {
 }
 
 // ---------- Recherche ----------
+/** Calcul lourd hors du fil principal, sur une vue figée de l'état Compose (sans risque de modification en cours de lecture). */
+suspend fun <T> background(block: () -> T): T = withContext(Dispatchers.Default) {
+    val s = Snapshot.takeSnapshot()
+    try { s.enter(block) } finally { s.dispose() }
+}
+
 /** Minuscules, sans accents ni ponctuation : « Été-2024 » -> « ete 2024 ». */
 fun norm(t: String) = java.text.Normalizer.normalize(t, java.text.Normalizer.Form.NFD)
     .replace(Regex("\\p{M}+"), "").lowercase().replace(Regex("[^a-z0-9]+"), " ").trim()
@@ -569,21 +600,28 @@ fun SearchScreen(vm: AppVm) {
     }
     // Catégories correspondant à la recherche en tête de liste
     val shownCats = remember(cats, words) { cats.filter { matches(words, it.second.name) } + cats.filterNot { matches(words, it.second.name) } }
-    val res = remember(words, kind, cat, vm.movies, vm.series, vm.live) {
-        val src = when (kind) { Kind.MOVIE -> vm.movies; Kind.SERIES -> vm.series; Kind.LIVE -> vm.live; null -> vm.movies + vm.series }
-        val inCat = cat?.let { c -> src.filter { "${it.kind}:${it.categoryId}" == c } } ?: src
-        val hits = inCat.filter { matches(words, it.name) }
-        // Sans filtre de catégorie, on ajoute les titres des catégories qui correspondent
-        val extra = if (cat == null && words.isNotEmpty() && hits.size < 300) {
-            val keys = cats.filter { matches(words, it.second.name) }.map { "${it.first}:${it.second.id}" }.toSet()
-            inCat.filter { "${it.kind}:${it.categoryId}" in keys }
-        } else emptyList()
-        (hits + extra).distinctBy { it.key }.let { if (words.isEmpty() && cat == null) it.sortedByDescending { i -> i.added } else it }
+    // Filtrer des dizaines de milliers de titres prend du temps : fait en arrière-plan, après une courte pause dans la frappe,
+    // pour que le texte saisi s'affiche immédiatement (les résultats précédents restent affichés en attendant)
+    val found by produceState(emptyList<Item>() to emptyList<Item>(), words, kind, cat, cats, vm.movies, vm.series, vm.live) {
+        if (words.isNotEmpty()) delay(150)
+        val job = coroutineContext.job // la frappe suivante annule ce calcul : on l'arrête sans attendre la fin
+        value = background {
+            val src = when (kind) { Kind.MOVIE -> vm.movies; Kind.SERIES -> vm.series; Kind.LIVE -> vm.live; null -> vm.movies + vm.series }
+            val inCat = cat?.let { c -> src.filter { "${it.kind}:${it.categoryId}" == c } } ?: src
+            val hits = inCat.filter { job.ensureActive(); matches(words, it.name) }
+            // Sans filtre de catégorie, on ajoute les titres des catégories qui correspondent
+            val extra = if (cat == null && words.isNotEmpty() && hits.size < 300) {
+                val keys = cats.filter { matches(words, it.second.name) }.map { "${it.first}:${it.second.id}" }.toSet()
+                inCat.filter { "${it.kind}:${it.categoryId}" in keys }
+            } else emptyList()
+            val res = (hits + extra).distinctBy { it.key }.let { if (words.isEmpty() && cat == null) it.sortedByDescending { i -> i.added } else it }
+            // En mode « Tout », les chaînes correspondant à la recherche suivent les films/séries
+            val resLive = if (kind != null || cat != null || words.isEmpty()) emptyList()
+                else vm.live.filter { job.ensureActive(); matches(words, it.name) }.take(100)
+            res to resLive
+        }
     }
-    // En mode « Tout », les chaînes correspondant à la recherche suivent les films/séries
-    val resLive = remember(words, kind, cat, vm.live) {
-        if (kind != null || cat != null || words.isEmpty()) emptyList() else vm.live.filter { matches(words, it.name) }.take(100)
-    }
+    val (res, resLive) = found
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         OutlinedTextField(q, { q = it }, Modifier.fillMaxWidth().padding(16.dp, 16.dp, 16.dp, 8.dp), singleLine = true,
             leadingIcon = { Icon(Icons.Filled.Search, null) }, placeholder = { Text("Films, séries, chaînes, catégories…") },

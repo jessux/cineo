@@ -24,12 +24,14 @@ Cinéo est un lecteur pour vos services compatibles **Xtream Codes** et vos play
 | 📺 **Télévision en direct** | Chaînes, guide des programmes et replay lorsque le fournisseur les propose. |
 | 👤 **Profils** | Une liste de favoris et un historique de visionnage propres à chaque profil. |
 | ✨ **À retrouver** | Reprise de lecture et recommandations basées sur l'historique et les favoris. |
+| 😄 **Selon votre humeur** | Sous le carrousel, choisissez Joyeux, Calme, Romantique, Frissons ou Adrénaline : des films et séries adaptés à vos goûts (langue, plateformes et genres déjà regardés). |
+| 👆 **Appui long** | Sur une affiche, au doigt ou en maintenant OK sur la télécommande : lecture, fiche, Ma liste, retrait de « Continuer à regarder » ou de l'historique, « Ne plus me le proposer ». Chaque retrait peut être annulé. |
 | 🔒 **Contrôle parental** | Masquage du contenu adulte et accès protégé par code PIN. |
 | 📡 **Chromecast** | Diffusion vers un appareil Cast compatible. |
 | ▶️ **Lecteur intégré** | Lecture avec Media3/ExoPlayer, pistes audio, sous-titres et choix du format d'image ; relais vers VLC en cas de format non pris en charge. |
 | 🔄 **Comptes et mises à jour** | Comptes enregistrés, avertissement en cas de limite de connexions atteinte et recherche de nouvelles versions sur GitHub. |
 
-Certaines fonctions, notamment le guide TV, le replay et les informations détaillées, dépendent du fournisseur et de la source utilisée. Avec une playlist M3U classique, les entrées sont classées en direct ou en films et le guide Xtream n'est pas disponible.
+Certaines fonctions, notamment le guide TV, le replay et les informations détaillées, dépendent du fournisseur et de la source utilisée. Avec une playlist M3U classique, les entrées sont classées en direct ou en films et le guide Xtream n'est pas disponible. Les suggestions par humeur s'appuient sur les noms de catégories (« FR - Comédie »…) et sur les genres fournis par le serveur : un catalogue classé uniquement par plateforme ou par année en propose moins.
 
 ## Aperçu
 

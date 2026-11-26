@@ -18,4 +18,20 @@ object Resume {
         keys.forEach { if (done) e.remove(it) else e.putString(it, "$pos|$dur|$ep") }
         e.apply()
     }
+
+    /** Efface des reprises ; renvoie les valeurs effacées pour pouvoir les remettre avec [restore]. */
+    fun forget(c: Context, keys: List<String>): Map<String, String> {
+        val p = prefs(c)
+        val old = keys.mapNotNull { k -> p.getString(k, null)?.let { k to it } }.toMap()
+        val e = p.edit()
+        keys.forEach { e.remove(it) }
+        e.apply()
+        return old
+    }
+
+    fun restore(c: Context, saved: Map<String, String>) {
+        val e = prefs(c).edit()
+        saved.forEach { (k, v) -> e.putString(k, v) }
+        e.apply()
+    }
 }
