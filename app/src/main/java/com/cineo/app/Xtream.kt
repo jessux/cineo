@@ -24,6 +24,7 @@ data class Item(
     val kind: Kind, val id: String, val name: String, val image: String?,
     val categoryId: String, val ext: String, val rating: String, val added: Long,
     val adult: Boolean = false, val archive: Boolean = false, val url: String? = null,
+    val genre: String = "", // fourni par get_series (et certains serveurs pour les films)
 ) { val key get() = "${kind.name}:$id" }
 data class Episode(val id: String, val title: String, val ext: String, val season: Int, val num: Int, val image: String?, val plot: String?)
 data class Info(
@@ -114,7 +115,7 @@ class Xtream(val c: Creds, private val cacheDir: File? = null) {
                 o.s(if (series) "cover" else "stream_icon").ifBlank { null }, o.s("category_id"),
                 o.s("container_extension").ifBlank { "mp4" }, o.s("rating"),
                 o.s(if (series) "last_modified" else "added").toLongOrNull() ?: 0,
-                adult = o.s("is_adult") == "1", archive = o.s("tv_archive") == "1",
+                adult = o.s("is_adult") == "1", archive = o.s("tv_archive") == "1", genre = o.s("genre"),
             )
         }
     }

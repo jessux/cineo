@@ -57,6 +57,11 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     var busy by mutableStateOf(false); private set
     var error by mutableStateOf<String?>(null); private set
     var detail by mutableStateOf<Item?>(null)
+    /** Titre dont le menu d'appui long est ouvert. */
+    var menu by mutableStateOf<Item?>(null)
+    /** Message en bas d'écran (avec « Annuler » si undo est fourni). */
+    var notice by mutableStateOf<Notice?>(null)
+    private fun notify(text: String, undo: (() -> Unit)? = null) { notice = Notice(text, undo) }
 
     var movieCats by mutableStateOf(emptyList<Category>()); private set
     var seriesCats by mutableStateOf(emptyList<Category>()); private set
@@ -81,11 +86,13 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     var profile by mutableStateOf<Profile?>(null); private set
 
     fun selectProfile(p: Profile?) {
-        profile = p; detail = null
-        favs.clear(); history.clear()
+        profile = p; detail = null; menu = null; notice = null
+        favs.clear(); history.clear(); hidden = emptySet(); mood = null
         if (p == null) return
         favs.addAll(prefs.getStringSet("favs_${p.id}", emptySet())!!)
         history.addAll(prefs.getString("history_${p.id}", "")!!.split("\n").filter { it.isNotBlank() })
+        hidden = prefs.getStringSet("hidden_${p.id}", emptySet())!!.toSet()
+        mood = prefs.getString("mood_${p.id}", null)?.let { n -> Mood.entries.firstOrNull { it.name == n } }
     }
 
     fun saveProfile(p: Profile) {
@@ -99,7 +106,7 @@ class AppVm(app: Application) : AndroidViewModel(app) {
         if (profiles.size <= 1) return
         profiles.removeAll { it.id == p.id }
         prefs.edit().putString("profiles", profiles.joinToString("\n") { it.encode() })
-            .remove("favs_${p.id}").remove("history_${p.id}").apply()
+            .remove("favs_${p.id}").remove("history_${p.id}").remove("hidden_${p.id}").remove("mood_${p.id}").apply()
     }
 
     val pid get() = profile?.id ?: "p0"
@@ -126,19 +133,86 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     fun resumeOf(c: android.content.Context, i: Item) = Resume.get(c, "$pid|${i.key}")
 
     val favs = mutableStateListOf<String>()
+    private fun saveFavs() = prefs.edit().putStringSet("favs_$pid", favs.toSet()).apply()
 
     fun toggleFav(i: Item) {
         if (!favs.remove(i.key)) favs.add(0, i.key)
-        prefs.edit().putStringSet("favs_$pid", favs.toSet()).apply()
+        saveFavs()
+    }
+
+    /** Ma liste depuis le menu d'appui long : même bascule, avec « Annuler ». */
+    fun toggleFavUndoable(i: Item) {
+        val at = favs.indexOf(i.key)
+        toggleFav(i)
+        notify(if (at >= 0) "Retiré de ma liste" else "Ajouté à ma liste") {
+            if (at >= 0) { if (i.key !in favs) favs.add(at.coerceAtMost(favs.size), i.key) } else favs.remove(i.key)
+            saveFavs()
+        }
     }
     // ---- Profil de goût : historique de lecture + Ma liste ----
     val history = mutableStateListOf<String>()
+    private fun saveHistory() = prefs.edit().putString("history_$pid", history.joinToString("\n")).apply()
 
     fun recordPlay(i: Item) {
         if (i.kind == Kind.LIVE) return
         history.remove(i.key); history.add(0, i.key)
         while (history.size > 100) history.removeAt(history.lastIndex)
-        prefs.edit().putString("history_$pid", history.joinToString("\n")).apply()
+        saveHistory()
+    }
+
+    /** Clés de reprise d'un titre : la sienne et, pour une série, celle de l'épisode en cours. */
+    private fun resumeKeys(i: Item): List<String> {
+        val k = "$pid|${i.key}"
+        val ep = Resume.get(app, k)?.ep?.takeIf { i.kind == Kind.SERIES && it.isNotBlank() }
+        return listOfNotNull(k, ep?.let { "$pid|EP:$it" })
+    }
+
+    /** Retire le titre de « Continuer à regarder » en oubliant sa progression (il reste dans l'historique). */
+    fun forgetResume(i: Item) {
+        val old = Resume.forget(app, resumeKeys(i)); resumeTick++
+        notify("Retiré de « Continuer à regarder »") { Resume.restore(app, old); resumeTick++ }
+    }
+
+    /** Retire le titre de l'historique et de « Continuer à regarder » : il ne compte plus dans les recommandations. */
+    fun forgetPlay(i: Item) {
+        val at = history.indexOf(i.key)
+        if (at < 0) return
+        val old = Resume.forget(app, resumeKeys(i))
+        history.removeAt(at); saveHistory(); resumeTick++
+        notify("Retiré de l'historique") {
+            if (i.key !in history) { history.add(at.coerceAtMost(history.size), i.key); saveHistory() }
+            Resume.restore(app, old); resumeTick++
+        }
+    }
+
+    // ---- « Ne plus me le proposer » : titres masqués des suggestions de l'accueil ----
+    var hidden by mutableStateOf(emptySet<String>()); private set
+    private fun setHidden(k: String, on: Boolean) {
+        hidden = if (on) hidden + k else hidden - k
+        prefs.edit().putStringSet("hidden_$pid", hidden).apply()
+    }
+    fun toggleHidden(i: Item) {
+        val was = i.key in hidden
+        setHidden(i.key, !was)
+        notify(if (was) "Ce titre pourra de nouveau vous être proposé" else "Ce titre ne vous sera plus proposé") { setHidden(i.key, was) }
+    }
+    fun clearHidden() { hidden = emptySet(); prefs.edit().remove("hidden_$pid").apply() }
+
+    // ---- Humeur du moment : suggestions sous le carrousel ----
+    var mood by mutableStateOf<Mood?>(null); private set
+    fun pickMood(m: Mood?) { mood = m; prefs.edit().putString("mood_$pid", m?.name).apply() }
+
+    /** Films et séries pour une humeur, classés selon les goûts du profil (titres regardés et Ma liste). */
+    fun moodPicks(m: Mood, limit: Int = 30): List<Item> {
+        val all = index()
+        val seen = history.mapNotNull { all[it] }
+        val liked = seen.mapIndexed { n, it -> it to if (n < 5) 3 else 1 } + favs.mapNotNull { all[it] }.map { it to 2 }
+        val mc = movieCats.associate { it.id to it.name }; val sc = seriesCats.associate { it.id to it.name }
+        val day = (System.currentTimeMillis() / 86_400_000L).toInt() // la sélection varie chaque jour, stable dans la journée
+        return MoodPicker.pick(
+            m, movies + series, { (if (it.kind == Kind.SERIES) sc else mc)[it.categoryId].orEmpty() }, liked,
+            history.toSet() + hidden, seen.map { norm(it.name) }.toSet(), day * 31 + pid.hashCode(), limit,
+        )
     }
 
     private fun index() = (movies + series).associateBy { it.key }
@@ -149,7 +223,7 @@ class AppVm(app: Application) : AndroidViewModel(app) {
         val score = HashMap<String, Int>()
         watched().forEachIndexed { n, it -> score.merge("${it.kind}:${it.categoryId}", if (n < 5) 3 else 1, Int::plus) }
         favItems().forEach { score.merge("${it.kind}:${it.categoryId}", 2, Int::plus) }
-        val seen = history.toSet()
+        val seen = history.toSet() + hidden
         val pool = (movies + series).filter { it.key !in seen && it.image != null }
         if (score.isEmpty()) // pas encore de profil : récents les mieux notés
             return pool.sortedByDescending { it.added }.take(300).sortedByDescending { it.rating.toDoubleOrNull() ?: 0.0 }.take(limit)
@@ -162,7 +236,7 @@ class AppVm(app: Application) : AndroidViewModel(app) {
     /** "Parce que vous avez regardé X" */
     fun becauseYouWatched(): Pair<Item, List<Item>>? {
         val last = watched().firstOrNull() ?: return null
-        val seen = history.toSet()
+        val seen = history.toSet() + hidden
         val list = (if (last.kind == Kind.MOVIE) moviesByCat else seriesByCat)[last.categoryId].orEmpty()
             .filter { it.key !in seen }.shuffled().take(20)
         return if (list.isEmpty()) null else last to list
@@ -252,3 +326,6 @@ data class Profile(val id: String, val name: String, val color: Int) {
         fun parse(l: String) = l.split("|").takeIf { it.size == 3 }?.let { Profile(it[0], it[1], it[2].toIntOrNull() ?: 0) }
     }
 }
+
+/** Pas une data class : deux messages identiques successifs restent distincts (chacun s'affiche). */
+class Notice(val text: String, val undo: (() -> Unit)? = null)

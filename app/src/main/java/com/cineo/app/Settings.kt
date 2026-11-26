@@ -28,6 +28,16 @@ fun SettingsDialog(vm: AppVm, onDismiss: () -> Unit) {
                     OutlinedButton(onClick = { onDismiss(); vm.logout() }) { Text("Changer de compte") }
                 }
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                Text("Suggestions", color = Gold, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text(
+                    if (vm.hidden.isEmpty()) "Aucun titre masqué (appui long sur une affiche : « Ne plus me le proposer »)"
+                    else "${vm.hidden.size} titre(s) masqué(s) des suggestions pour ce profil",
+                    fontSize = 12.sp, color = Color.Gray,
+                )
+                if (vm.hidden.isNotEmpty()) TextButton(onClick = { vm.clearHidden() }, contentPadding = PaddingValues(0.dp)) {
+                    Text("Tout réafficher")
+                }
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 Text("Contrôle parental", color = Gold, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Afficher le contenu adulte", Modifier.weight(1f))
